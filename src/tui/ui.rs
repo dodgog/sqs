@@ -20,9 +20,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let main_area = outer[0];
     let status_area = outer[1];
 
-    if is_triage_context(&app.mode) {
-        draw_triage(frame, main_area, app);
-    } else if matches!(app.mode, Mode::Search { .. }) {
+    if matches!(app.mode, Mode::Search { .. }) {
         draw_search(frame, main_area, app);
     } else {
         draw_normal(frame, main_area, app);
@@ -74,12 +72,6 @@ fn draw_normal(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
         app.detail_scroll,
         focused == FocusedPanel::Detail,
     );
-}
-
-fn draw_triage(frame: &mut Frame, area: Rect, app: &TuiApp) {
-    let progress = format!("{}/{}", app.triage.index + 1, app.triage.task_ids.len());
-    let task = app.current_triage_task();
-    widgets::triage::render(frame, area, task, &progress);
 }
 
 fn draw_search(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
@@ -138,16 +130,4 @@ fn draw_search(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
         .highlight_symbol("> ");
 
     frame.render_stateful_widget(list, rows[1], list_state);
-}
-
-fn is_triage_context(mode: &Mode) -> bool {
-    matches!(
-        mode,
-        Mode::Triage
-            | Mode::MoveTarget { from_triage: true }
-            | Mode::ConfirmDelete {
-                from_triage: true,
-                ..
-            }
-    )
 }

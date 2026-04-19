@@ -12,9 +12,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let line = match &app.mode {
         Mode::Normal => normal_line(app, area.width),
         Mode::Visual { .. } => visual_line(),
-        Mode::AddForm { .. } | Mode::Triage | Mode::Search { .. } => return,
+        Mode::AddForm { .. } | Mode::Search { .. } => return,
         Mode::ConfirmDelete { task_id, .. } => confirm_delete_line(task_id),
-        Mode::MoveTarget { .. } => move_target_line(),
+        Mode::MoveTarget => move_target_line(),
     };
 
     let bar = Paragraph::new(line);
@@ -41,10 +41,6 @@ fn normal_line(app: &TuiApp, area_width: u16) -> Line<'static> {
         Span::raw(":queue "),
         hint("a"),
         Span::raw(":add "),
-        hint("d"),
-        Span::raw(":done "),
-        hint("s"),
-        Span::raw(":start "),
         hint("m"),
         Span::raw(":move "),
         hint("x"),
@@ -53,8 +49,6 @@ fn normal_line(app: &TuiApp, area_width: u16) -> Line<'static> {
         Span::raw(":edit "),
         hint("/"),
         Span::raw(":search "),
-        hint("t"),
-        Span::raw(":triage "),
         hint("q"),
         Span::raw(":quit"),
     ];

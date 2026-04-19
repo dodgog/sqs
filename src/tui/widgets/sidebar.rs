@@ -16,10 +16,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, focused: bool) {
         .iter()
         .enumerate()
         .map(|(i, entry)| match entry {
-            SidebarEntry::Separator => ListItem::new(Line::from(Span::styled(
-                "  ──────────",
-                Style::default().fg(Color::DarkGray),
-            ))),
             SidebarEntry::Queue(queue) => {
                 let is_active = i == app.active_sidebar_index;
                 queue_item(&queue.to_string(), counts.get(*queue), is_active)
@@ -33,7 +29,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, focused: bool) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Queues ")
+        .title(" Lists ")
         .border_style(panel_border_style(focused));
     let list = List::new(items).block(block);
     frame.render_widget(list, area);

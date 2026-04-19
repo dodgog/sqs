@@ -1,9 +1,9 @@
 use chrono::Utc;
 
+use crate::adapters::markdown_todolists::identity;
 use crate::app::app_error::AppError;
 use crate::app::operations;
 use crate::domain::task::{Queue, Task};
-use crate::storage::id_state::SharedIdAllocator;
 
 use super::app_state::{Mode, TuiApp};
 
@@ -66,61 +66,16 @@ pub fn move_tasks_to_queue(
 }
 
 pub fn confirm_delete(app: &mut TuiApp) -> Result<SideEffect, AppError> {
-    let (task_id, from_triage) = match &app.mode {
-        Mode::ConfirmDelete {
-            task_id,
-            from_triage,
-        } => (task_id.clone(), *from_triage),
+    let task_id = match &app.mode {
+        Mode::ConfirmDelete { task_id } => task_id.clone(),
         _ => return Ok(SideEffect::None),
     };
 
-    if from_triage {
-        app.repo.delete(&task_id)?;
-        app.triage.summary.deleted += 1;
-        app.refresh()?;
-        app.mode = Mode::Triage;
-        app.advance_triage_or_finish();
-    } else {
-        app.repo.delete(&task_id)?;
-        app.mode = Mode::Normal;
-        app.refresh()?;
-        app.set_status(format!("Deleted: {task_id}"));
-    }
-    Ok(SideEffect::None)
-}
-
-pub fn triage_move(app: &mut TuiApp, queue: Queue) -> Result<SideEffect, AppError> {
-    let Some(task) = app.current_triage_task() else {
-        return Ok(SideEffect::None);
-    };
-    let task_id = task.id.clone();
-
-    if queue == Queue::Done {
-        operations::mark_done(&app.repo, &task_id)?;
-        app.triage.summary.record_move(Queue::Done);
-    } else {
-        app.repo.move_to_queue(&task_id, queue, Utc::now())?;
-        app.triage.summary.record_move(queue);
-    }
-
+    app.repo.delete(&task_id)?;
+    app.mode = Mode::Normal;
     app.refresh()?;
-    app.advance_triage_or_finish();
+    app.set_status(format!("Deleted: {task_id}"));
     Ok(SideEffect::None)
-}
-
-pub fn triage_skip(app: &mut TuiApp) -> Result<SideEffect, AppError> {
-    app.triage.summary.skipped += 1;
-    app.advance_triage_or_finish();
-    Ok(SideEffect::None)
-}
-
-pub fn triage_edit(app: &mut TuiApp) -> Result<SideEffect, AppError> {
-    let Some(task) = app.current_triage_task() else {
-        return Ok(SideEffect::None);
-    };
-    Ok(SideEffect::SuspendForEditor {
-        task_id: task.id.clone(),
-    })
 }
 
 pub fn submit_add_form(app: &mut TuiApp) -> Result<SideEffect, AppError> {
@@ -134,8 +89,8 @@ pub fn submit_add_form(app: &mut TuiApp) -> Result<SideEffect, AppError> {
         return Ok(SideEffect::None);
     }
 
-    let allocator = SharedIdAllocator::new(&app.config);
-    let id = allocator.generate(&app.repo)?;
+    let existing = app.tasks.iter().map(|t| t.id.clone()).collect();
+    let id = identity::generate_id(&existing);
     let mut task = Task::new(id, &title, Utc::now());
     task.queue = queue;
     app.repo.create(&task)?;
@@ -244,7 +199,6 @@ mod tests {
         let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now)]);
         app.mode = Mode::ConfirmDelete {
             task_id: "a1".to_string(),
-            from_triage: false,
         };
         confirm_delete(&mut app).unwrap();
         assert!(matches!(app.mode, Mode::Normal));
@@ -258,69 +212,6 @@ mod tests {
         // Mode is Normal, not ConfirmDelete
         let result = confirm_delete(&mut app).unwrap();
         assert!(matches!(result, SideEffect::None));
-    }
-
-    #[test]
-    fn confirm_delete_from_triage_advances() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Inbox), ("a2", Queue::Inbox)]);
-        app.enter_triage();
-        app.mode = Mode::ConfirmDelete {
-            task_id: "a1".to_string(),
-            from_triage: true,
-        };
-        confirm_delete(&mut app).unwrap();
-        assert_eq!(app.triage.summary.deleted, 1);
-        // Should have advanced; triage index is now 1
-        assert_eq!(app.triage.index, 1);
-    }
-
-    // --- triage_move ---
-
-    #[test]
-    fn triage_move_to_now() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Inbox), ("a2", Queue::Inbox)]);
-        app.enter_triage();
-        let first_id = app.triage.task_ids[0].clone();
-        triage_move(&mut app, Queue::Now).unwrap();
-        let task = app.repo.read(&first_id).unwrap();
-        assert_eq!(task.queue, Queue::Now);
-        assert_eq!(app.triage.summary.moved_now, 1);
-    }
-
-    #[test]
-    fn triage_move_to_done_uses_mark_done() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Inbox)]);
-        app.enter_triage();
-        triage_move(&mut app, Queue::Done).unwrap();
-        let task = app.repo.read("a1").unwrap();
-        assert_eq!(task.queue, Queue::Done);
-        assert_eq!(app.triage.summary.moved_done, 1);
-    }
-
-    // --- triage_skip ---
-
-    #[test]
-    fn triage_skip_increments_skipped_and_advances() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Inbox), ("a2", Queue::Inbox)]);
-        app.enter_triage();
-        triage_skip(&mut app).unwrap();
-        assert_eq!(app.triage.summary.skipped, 1);
-        assert_eq!(app.triage.index, 1);
-    }
-
-    // --- triage_edit ---
-
-    #[test]
-    fn triage_edit_returns_suspend_side_effect() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Inbox)]);
-        app.enter_triage();
-        let result = triage_edit(&mut app).unwrap();
-        assert!(matches!(result, SideEffect::SuspendForEditor { task_id } if task_id == "a1"));
     }
 
     // --- submit_add_form ---

@@ -106,7 +106,7 @@ fn add_creates_task_in_inbox() {
 }
 
 #[test]
-fn add_generates_short_crockford_ids_and_persists_allocator_state() {
+fn add_generates_random_alphanumeric_ids() {
     let temp = TempDir::new().expect("temp dir should exist");
 
     let assert = sqs_cmd()
@@ -125,11 +125,8 @@ fn add_generates_short_crockford_ids_and_persists_allocator_state() {
         .map(|(id, _)| id)
         .expect("created-task output should include the generated ID");
 
-    assert_eq!(id.len(), 3);
-    assert!(
-        id.bytes()
-            .all(|byte| b"0123456789abcdefghjkmnpqrstvwxyz".contains(&byte))
-    );
+    assert_eq!(id.len(), 4);
+    assert!(id.chars().all(|c| c.is_ascii_alphanumeric()));
     assert!(temp.path().join("inbox").join(format!("{id}.md")).exists());
 }
 

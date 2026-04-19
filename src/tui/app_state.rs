@@ -8,22 +8,19 @@ use crate::domain::task::{Queue, Task};
 use crate::storage::config::ResolvedConfig;
 use crate::storage::repo::TaskRepo;
 
-/// What the sidebar can show: a queue, a separator line, or "all".
+/// What the sidebar can show: a queue or "all".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarEntry {
     Queue(Queue),
-    Separator,
     All,
 }
 
-/// The sidebar layout with visual separators between groups.
+/// The sidebar layout — flat list of queues, "all" at bottom.
 const SIDEBAR_ENTRIES: &[SidebarEntry] = &[
     SidebarEntry::Queue(Queue::Now),
     SidebarEntry::Queue(Queue::Next),
     SidebarEntry::Queue(Queue::Later),
-    SidebarEntry::Separator,
     SidebarEntry::Queue(Queue::Inbox),
-    SidebarEntry::Separator,
     SidebarEntry::Queue(Queue::Done),
     SidebarEntry::All,
 ];
@@ -90,67 +87,6 @@ impl FocusedPanel {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct TriageSummary {
-    pub moved_now: u32,
-    pub moved_next: u32,
-    pub moved_later: u32,
-    pub moved_done: u32,
-    pub deleted: u32,
-    pub skipped: u32,
-}
-
-impl TriageSummary {
-    pub fn record_move(&mut self, queue: Queue) {
-        match queue {
-            Queue::Now => self.moved_now += 1,
-            Queue::Next => self.moved_next += 1,
-            Queue::Later => self.moved_later += 1,
-            Queue::Done => self.moved_done += 1,
-            Queue::Inbox => {}
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.moved_now == 0
-            && self.moved_next == 0
-            && self.moved_later == 0
-            && self.moved_done == 0
-            && self.deleted == 0
-            && self.skipped == 0
-    }
-}
-
-impl std::fmt::Display for TriageSummary {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut parts = Vec::new();
-        if self.moved_now > 0 {
-            parts.push(format!("{} to now", self.moved_now));
-        }
-        if self.moved_next > 0 {
-            parts.push(format!("{} to next", self.moved_next));
-        }
-        if self.moved_later > 0 {
-            parts.push(format!("{} to later", self.moved_later));
-        }
-        if self.moved_done > 0 {
-            parts.push(format!("{} done", self.moved_done));
-        }
-        if self.deleted > 0 {
-            parts.push(format!("{} deleted", self.deleted));
-        }
-        if self.skipped > 0 {
-            parts.push(format!("{} skipped", self.skipped));
-        }
-        if parts.is_empty() {
-            write!(f, "No changes")
-        } else {
-            write!(f, "{}", parts.join(", "))
-        }
-    }
-}
-
 pub enum Mode {
     Normal,
     Visual {
@@ -162,29 +98,17 @@ pub enum Mode {
     },
     ConfirmDelete {
         task_id: String,
-        from_triage: bool,
     },
-    MoveTarget {
-        from_triage: bool,
-    },
+    MoveTarget,
     Search {
         query: String,
         results: Vec<(String, Queue)>,
         list_state: ListState,
     },
-    Triage,
-}
-
-/// Triage state lives outside Mode because it must survive transitions
-/// to ConfirmDelete and MoveTarget sub-modes.
-#[derive(Default)]
-pub struct TriageState {
-    pub task_ids: Vec<String>,
-    pub index: usize,
-    pub summary: TriageSummary,
 }
 
 pub struct TuiApp {
+    #[allow(dead_code)]
     pub config: ResolvedConfig,
     pub repo: TaskRepo,
 
@@ -201,9 +125,6 @@ pub struct TuiApp {
 
     // Mode
     pub mode: Mode,
-
-    // Triage state (persists across ConfirmDelete/MoveTarget sub-modes)
-    pub triage: TriageState,
 
     // Transient status message
     pub status_message: Option<(String, Instant)>,
@@ -224,7 +145,6 @@ impl TuiApp {
             focused_panel: FocusedPanel::TaskList,
             detail_scroll: 0,
             mode: Mode::Normal,
-            triage: TriageState::default(),
             status_message: None,
             needs_redraw: true,
         };
@@ -253,7 +173,6 @@ impl TuiApp {
         match SIDEBAR_ENTRIES[self.active_sidebar_index] {
             SidebarEntry::Queue(q) => QueueFilter::Single(q),
             SidebarEntry::All => QueueFilter::All,
-            SidebarEntry::Separator => unreachable!("separator cannot be active sidebar entry"),
         }
     }
 
@@ -290,26 +209,14 @@ impl TuiApp {
     }
 
     pub fn next_queue(&mut self) {
-        self.active_sidebar_index = next_selectable(self.active_sidebar_index, 1);
-        debug_assert!(
-            !matches!(
-                SIDEBAR_ENTRIES[self.active_sidebar_index],
-                SidebarEntry::Separator
-            ),
-            "next_queue landed on a separator"
-        );
+        let len = SIDEBAR_ENTRIES.len();
+        self.active_sidebar_index = (self.active_sidebar_index + 1) % len;
         self.select_first_task();
     }
 
     pub fn prev_queue(&mut self) {
-        self.active_sidebar_index = next_selectable(self.active_sidebar_index, -1);
-        debug_assert!(
-            !matches!(
-                SIDEBAR_ENTRIES[self.active_sidebar_index],
-                SidebarEntry::Separator
-            ),
-            "prev_queue landed on a separator"
-        );
+        let len = SIDEBAR_ENTRIES.len();
+        self.active_sidebar_index = (self.active_sidebar_index + len - 1) % len;
         self.select_first_task();
     }
 
@@ -446,39 +353,6 @@ impl TuiApp {
         self.mode = Mode::Normal;
     }
 
-    pub fn current_triage_task(&self) -> Option<&Task> {
-        let task_id = self.triage.task_ids.get(self.triage.index)?;
-        self.tasks.iter().find(|t| t.id == *task_id)
-    }
-
-    pub fn enter_triage(&mut self) {
-        let inbox_ids: Vec<String> = self
-            .tasks
-            .iter()
-            .filter(|t| t.queue == Queue::Inbox)
-            .map(|t| t.id.clone())
-            .collect();
-        if inbox_ids.is_empty() {
-            self.set_status("Inbox is empty — nothing to triage");
-            return;
-        }
-        self.triage = TriageState {
-            task_ids: inbox_ids,
-            index: 0,
-            summary: TriageSummary::default(),
-        };
-        self.mode = Mode::Triage;
-    }
-
-    pub fn advance_triage_or_finish(&mut self) {
-        self.triage.index += 1;
-        if self.triage.index >= self.triage.task_ids.len() {
-            let summary = self.triage.summary.to_string();
-            self.mode = Mode::Normal;
-            self.set_status(format!("Triage: {summary}"));
-        }
-    }
-
     pub fn set_status(&mut self, message: impl Into<String>) {
         self.status_message = Some((message.into(), Instant::now()));
     }
@@ -500,18 +374,6 @@ impl TuiApp {
             self.task_list_state.select(Some(0));
         }
         self.detail_scroll = 0;
-    }
-}
-
-/// Find the next selectable sidebar index (skipping separators), wrapping around.
-fn next_selectable(current: usize, direction: i32) -> usize {
-    let len = SIDEBAR_ENTRIES.len();
-    let mut idx = current;
-    loop {
-        idx = ((idx as i32 + direction).rem_euclid(len as i32)) as usize;
-        if !matches!(SIDEBAR_ENTRIES[idx], SidebarEntry::Separator) {
-            return idx;
-        }
     }
 }
 
@@ -571,25 +433,6 @@ mod tests {
         assert_eq!(FocusedPanel::Detail.right(), FocusedPanel::Detail);
     }
 
-    // --- next_selectable ---
-
-    #[test]
-    fn next_selectable_skips_separators() {
-        // SIDEBAR_ENTRIES: Now(0), Next(1), Later(2), Sep(3), Inbox(4), Sep(5), Done(6), All(7)
-        // From Later(2), next should skip Sep(3) and land on Inbox(4)
-        assert_eq!(next_selectable(2, 1), 4);
-        // From Inbox(4), prev should skip Sep(3) and land on Later(2)
-        assert_eq!(next_selectable(4, -1), 2);
-    }
-
-    #[test]
-    fn next_selectable_wraps_around() {
-        // From All(7), next should wrap to Now(0)
-        assert_eq!(next_selectable(7, 1), 0);
-        // From Now(0), prev should wrap to All(7)
-        assert_eq!(next_selectable(0, -1), 7);
-    }
-
     // --- TuiApp::new ---
 
     #[test]
@@ -631,7 +474,7 @@ mod tests {
     fn active_filter_returns_all_for_all_entry() {
         let temp = TempDir::new().unwrap();
         let mut app = make_app(&temp);
-        app.active_sidebar_index = 7; // All
+        app.active_sidebar_index = 5; // All
         assert_eq!(app.active_filter(), QueueFilter::All);
     }
 
@@ -666,7 +509,7 @@ mod tests {
     fn current_queue_tasks_returns_all_when_all_selected() {
         let temp = TempDir::new().unwrap();
         let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now), ("a2", Queue::Inbox)]);
-        app.active_sidebar_index = 7; // All
+        app.active_sidebar_index = 5; // All
         assert_eq!(app.current_queue_tasks().len(), 2);
     }
 
@@ -698,8 +541,7 @@ mod tests {
         app.next_queue();
         assert_eq!(app.active_sidebar_index, 2); // Later
         app.next_queue();
-        // Should skip separator(3) and land on Inbox(4)
-        assert_eq!(app.active_sidebar_index, 4);
+        assert_eq!(app.active_sidebar_index, 3); // Inbox
     }
 
     #[test]
@@ -708,8 +550,8 @@ mod tests {
         let mut app = make_app(&temp);
         app.active_sidebar_index = 0; // Now
         app.prev_queue();
-        // Should wrap to All(7)
-        assert_eq!(app.active_sidebar_index, 7);
+        // Should wrap to All(5)
+        assert_eq!(app.active_sidebar_index, 5);
     }
 
     #[test]
@@ -718,8 +560,8 @@ mod tests {
         let mut app = make_app(&temp);
         app.select_queue_by_index(0); // First selectable = Now(0)
         assert_eq!(app.active_sidebar_index, 0);
-        app.select_queue_by_index(3); // Fourth selectable = Inbox(4)
-        assert_eq!(app.active_sidebar_index, 4);
+        app.select_queue_by_index(3); // Fourth selectable = Inbox(3)
+        assert_eq!(app.active_sidebar_index, 3);
     }
 
     #[test]
@@ -727,9 +569,9 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let mut app = make_app(&temp);
         app.jump_to_queue(Queue::Inbox);
-        assert_eq!(app.active_sidebar_index, 4);
+        assert_eq!(app.active_sidebar_index, 3);
         app.jump_to_queue(Queue::Done);
-        assert_eq!(app.active_sidebar_index, 6);
+        assert_eq!(app.active_sidebar_index, 4);
     }
 
     // --- task navigation ---
@@ -861,66 +703,7 @@ mod tests {
         };
         app.select_search_result();
         assert!(matches!(app.mode, Mode::Normal));
-        assert_eq!(app.active_sidebar_index, 4); // Inbox
-    }
-
-    // --- triage ---
-
-    #[test]
-    fn enter_triage_sets_mode_with_inbox_tasks() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(
-            &temp,
-            &[
-                ("a1", Queue::Inbox),
-                ("a2", Queue::Inbox),
-                ("b1", Queue::Now),
-            ],
-        );
-        app.enter_triage();
-        assert!(matches!(app.mode, Mode::Triage));
-        assert_eq!(app.triage.task_ids.len(), 2);
-        assert_eq!(app.triage.index, 0);
-    }
-
-    #[test]
-    fn enter_triage_sets_status_when_inbox_empty() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app(&temp);
-        app.enter_triage();
-        assert!(matches!(app.mode, Mode::Normal));
-        assert!(app.active_status_message().unwrap().contains("empty"));
-    }
-
-    #[test]
-    fn current_triage_task_returns_first_inbox_task() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Inbox), ("a2", Queue::Inbox)]);
-        app.enter_triage();
-        let task = app.current_triage_task().unwrap();
-        // First triage task should be one of the inbox tasks
-        assert!(task.queue == Queue::Inbox);
-        assert_eq!(task.id, app.triage.task_ids[0]);
-    }
-
-    #[test]
-    fn advance_triage_moves_to_next_task() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Inbox), ("a2", Queue::Inbox)]);
-        app.enter_triage();
-        app.advance_triage_or_finish();
-        assert!(matches!(app.mode, Mode::Triage));
-        assert_eq!(app.triage.index, 1);
-    }
-
-    #[test]
-    fn advance_triage_finishes_and_shows_summary() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Inbox)]);
-        app.enter_triage();
-        app.advance_triage_or_finish();
-        assert!(matches!(app.mode, Mode::Normal));
-        assert!(app.active_status_message().unwrap().contains("Triage"));
+        assert_eq!(app.active_sidebar_index, 3); // Inbox
     }
 
     // --- status messages ---

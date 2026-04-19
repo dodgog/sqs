@@ -3,13 +3,11 @@ use std::{fs, path::PathBuf, process::Command};
 use chrono::Utc;
 use clap::Parser;
 
+use crate::adapters::markdown_todolists::identity;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
 use crate::domain::{id::validate_user_id, task::Task};
-use crate::{
-    io::{input, output},
-    storage::id_state::SharedIdAllocator,
-};
+use crate::io::{input, output};
 
 #[derive(Debug, Parser)]
 #[command(about = "Add a task")]
@@ -54,7 +52,10 @@ pub fn handle_add(
             }
             id
         }
-        None => SharedIdAllocator::new(&resolved).generate(&repo)?,
+        None => {
+            let existing = repo.scan_all()?.into_iter().map(|s| s.task.id).collect();
+            identity::generate_id(&existing)
+        }
     };
 
     let now = Utc::now();

@@ -26,9 +26,8 @@ pub fn handle_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppErro
         Mode::Visual { .. } => handle_visual_key(app, key),
         Mode::AddForm { .. } => handle_add_form_key(app, key),
         Mode::ConfirmDelete { .. } => handle_confirm_delete_key(app, key),
-        Mode::MoveTarget { .. } => handle_move_target_key(app, key),
+        Mode::MoveTarget => handle_move_target_key(app, key),
         Mode::Search { .. } => handle_search_key(app, key),
-        Mode::Triage => handle_triage_key(app, key),
     }
 }
 
@@ -50,17 +49,11 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
         // Vertical navigation — depends on focused panel
         KeyCode::Char('j') | KeyCode::Down => match app.focused_panel {
             FocusedPanel::Sidebar => app.next_queue(),
-            FocusedPanel::TaskList => app.select_next_task(),
-            FocusedPanel::Detail => {
-                app.detail_scroll = app.detail_scroll.saturating_add(1);
-            }
+            FocusedPanel::TaskList | FocusedPanel::Detail => app.select_next_task(),
         },
         KeyCode::Char('k') | KeyCode::Up => match app.focused_panel {
             FocusedPanel::Sidebar => app.prev_queue(),
-            FocusedPanel::TaskList => app.select_prev_task(),
-            FocusedPanel::Detail => {
-                app.detail_scroll = app.detail_scroll.saturating_sub(1);
-            }
+            FocusedPanel::TaskList | FocusedPanel::Detail => app.select_prev_task(),
         },
 
         // Tab cycles queues regardless of panel focus
@@ -77,13 +70,12 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
         KeyCode::Char('d') => return actions::mark_done(app),
         KeyCode::Char('s') => return actions::start_task(app),
         KeyCode::Char('m') if app.selected_task().is_some() => {
-            app.mode = Mode::MoveTarget { from_triage: false };
+            app.mode = Mode::MoveTarget;
         }
         KeyCode::Char('x') => {
             if let Some(task) = app.selected_task() {
                 app.mode = Mode::ConfirmDelete {
                     task_id: task.id.clone(),
-                    from_triage: false,
                 };
             }
         }
@@ -97,9 +89,6 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
             };
             app.update_search_results();
         }
-
-        // Triage
-        KeyCode::Char('t') => app.enter_triage(),
 
         // Add task
         KeyCode::Char('a') => {
@@ -155,7 +144,7 @@ fn handle_visual_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
             app.select_prev_task();
         }
         KeyCode::Char('m') if !app.visual_selected_task_ids().is_empty() => {
-            app.mode = Mode::MoveTarget { from_triage: false };
+            app.mode = Mode::MoveTarget;
         }
         KeyCode::Char('g') => {
             app.select_first_task_absolute();
@@ -206,18 +195,7 @@ fn handle_confirm_delete_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffe
     match key.code {
         KeyCode::Char('y') | KeyCode::Enter => actions::confirm_delete(app),
         _ => {
-            let from_triage = matches!(
-                app.mode,
-                Mode::ConfirmDelete {
-                    from_triage: true,
-                    ..
-                }
-            );
-            app.mode = if from_triage {
-                Mode::Triage
-            } else {
-                Mode::Normal
-            };
+            app.mode = Mode::Normal;
             Ok(SideEffect::None)
         }
     }
@@ -278,72 +256,26 @@ fn handle_search_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
     Ok(SideEffect::None)
 }
 
-fn handle_triage_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppError> {
-    match key.code {
-        // Same keys as normal mode
-        KeyCode::Char('d') => actions::triage_move(app, Queue::Done),
-        KeyCode::Char('s') => actions::triage_move(app, Queue::Now),
-        KeyCode::Char('m') => {
-            if app.current_triage_task().is_some() {
-                app.mode = Mode::MoveTarget { from_triage: true };
-            }
-            Ok(SideEffect::None)
-        }
-        KeyCode::Char('x') => {
-            if let Some(task) = app.current_triage_task() {
-                app.mode = Mode::ConfirmDelete {
-                    task_id: task.id.clone(),
-                    from_triage: true,
-                };
-            }
-            Ok(SideEffect::None)
-        }
-        KeyCode::Char('e') => actions::triage_edit(app),
-
-        // Triage-specific
-        KeyCode::Char(' ') => actions::triage_skip(app),
-        KeyCode::Char('q') | KeyCode::Esc => {
-            let summary = app.triage.summary.to_string();
-            app.mode = Mode::Normal;
-            app.set_status(format!("Triage: {summary}"));
-            Ok(SideEffect::None)
-        }
-        _ => Ok(SideEffect::None),
-    }
-}
-
 fn handle_move_target_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppError> {
-    let from_triage = matches!(app.mode, Mode::MoveTarget { from_triage: true });
-    let cancel_mode = if from_triage {
-        Mode::Triage
-    } else {
-        Mode::Normal
-    };
-
     match key.code {
-        KeyCode::Char('i') | KeyCode::Char('1') => do_move(app, Queue::Inbox, from_triage),
-        KeyCode::Char('n') | KeyCode::Char('2') => do_move(app, Queue::Now, from_triage),
-        KeyCode::Char('x') | KeyCode::Char('3') => do_move(app, Queue::Next, from_triage),
-        KeyCode::Char('l') | KeyCode::Char('4') => do_move(app, Queue::Later, from_triage),
+        KeyCode::Char('i') | KeyCode::Char('1') => do_move(app, Queue::Inbox),
+        KeyCode::Char('n') | KeyCode::Char('2') => do_move(app, Queue::Now),
+        KeyCode::Char('x') | KeyCode::Char('3') => do_move(app, Queue::Next),
+        KeyCode::Char('l') | KeyCode::Char('4') => do_move(app, Queue::Later),
         _ => {
-            app.mode = cancel_mode;
+            app.mode = Mode::Normal;
             Ok(SideEffect::None)
         }
     }
 }
 
-fn do_move(app: &mut TuiApp, queue: Queue, from_triage: bool) -> Result<SideEffect, AppError> {
-    if from_triage {
-        app.mode = Mode::Triage;
-        actions::triage_move(app, queue)
+fn do_move(app: &mut TuiApp, queue: Queue) -> Result<SideEffect, AppError> {
+    let visual_ids = app.visual_selected_task_ids();
+    app.mode = Mode::Normal;
+    if visual_ids.is_empty() {
+        actions::move_to_queue(app, queue)
     } else {
-        let visual_ids = app.visual_selected_task_ids();
-        app.mode = Mode::Normal;
-        if visual_ids.is_empty() {
-            actions::move_to_queue(app, queue)
-        } else {
-            actions::move_tasks_to_queue(app, &visual_ids, queue)
-        }
+        actions::move_tasks_to_queue(app, &visual_ids, queue)
     }
 }
 
@@ -529,7 +461,6 @@ mod tests {
         let mut app = test_app_with_task(&temp);
         app.mode = Mode::ConfirmDelete {
             task_id: "abc".to_string(),
-            from_triage: false,
         };
 
         handle_key(&mut app, key(KeyCode::Char('n'))).unwrap();
@@ -541,14 +472,14 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let mut app = test_app_with_task(&temp);
         handle_key(&mut app, key(KeyCode::Char('m'))).unwrap();
-        assert!(matches!(app.mode, Mode::MoveTarget { .. }));
+        assert!(matches!(app.mode, Mode::MoveTarget));
     }
 
     #[test]
     fn move_target_n_moves_to_now() {
         let temp = TempDir::new().unwrap();
         let mut app = test_app_with_task(&temp);
-        app.mode = Mode::MoveTarget { from_triage: false };
+        app.mode = Mode::MoveTarget;
 
         handle_key(&mut app, key(KeyCode::Char('n'))).unwrap();
         assert!(matches!(app.mode, Mode::Normal));
@@ -559,21 +490,15 @@ mod tests {
     }
 
     #[test]
-    fn j_scrolls_detail_when_detail_focused() {
+    fn j_in_detail_navigates_items() {
         let temp = TempDir::new().unwrap();
-        let mut app = test_app(&temp);
+        let mut app = test_app_with_task(&temp);
         app.focused_panel = FocusedPanel::Detail;
-        app.detail_scroll = 0;
 
+        // j/k in Detail should navigate items, not scroll
         handle_key(&mut app, key(KeyCode::Char('j'))).unwrap();
-        assert_eq!(app.detail_scroll, 1);
-
-        handle_key(&mut app, key(KeyCode::Char('k'))).unwrap();
-        assert_eq!(app.detail_scroll, 0);
-
-        // Should not underflow
-        handle_key(&mut app, key(KeyCode::Char('k'))).unwrap();
-        assert_eq!(app.detail_scroll, 0);
+        // With one task, wraps back to 0
+        assert_eq!(app.task_list_state.selected(), Some(0));
     }
 
     #[test]
