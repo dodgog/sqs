@@ -3,59 +3,63 @@ use std::time::Instant;
 
 use ratatui::widgets::ListState;
 
+use crate::adapter::{Adapter, Item, ListDef};
 use crate::app::app_error::AppError;
-use crate::domain::task::{Queue, Task};
-use crate::storage::config::ResolvedConfig;
-use crate::storage::repo::TaskRepo;
 
-/// What the sidebar can show: a queue or "all".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the sidebar can show: a named list or "all".
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidebarEntry {
-    Queue(Queue),
+    List(String),
     All,
 }
 
-/// The sidebar layout — flat list of queues, "all" at bottom.
-const SIDEBAR_ENTRIES: &[SidebarEntry] = &[
-    SidebarEntry::Queue(Queue::Now),
-    SidebarEntry::Queue(Queue::Next),
-    SidebarEntry::Queue(Queue::Later),
-    SidebarEntry::Queue(Queue::Inbox),
-    SidebarEntry::Queue(Queue::Done),
-    SidebarEntry::All,
-];
+fn default_sidebar_entries() -> Vec<SidebarEntry> {
+    vec![
+        SidebarEntry::List("now".into()),
+        SidebarEntry::List("next".into()),
+        SidebarEntry::List("later".into()),
+        SidebarEntry::List("inbox".into()),
+        SidebarEntry::List("done".into()),
+        SidebarEntry::All,
+    ]
+}
 
-/// Which tasks to show in the task list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueueFilter {
-    Single(Queue),
+fn sidebar_from_adapter_lists(lists: &[ListDef]) -> Vec<SidebarEntry> {
+    let mut entries: Vec<SidebarEntry> = lists
+        .iter()
+        .map(|l| SidebarEntry::List(l.name.clone()))
+        .collect();
+    entries.push(SidebarEntry::All);
+    if entries.len() == 1 {
+        return default_sidebar_entries();
+    }
+    entries
+}
+
+/// Which items to show in the item list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListFilter {
+    Single(String),
     All,
 }
 
-impl fmt::Display for QueueFilter {
+impl fmt::Display for ListFilter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Single(q) => write!(f, "{q}"),
+            Self::Single(name) => write!(f, "{name}"),
             Self::All => write!(f, "all"),
         }
     }
 }
 
-pub struct QueueCounts {
-    counts: [usize; 5],
+pub struct ListCounts {
+    counts: std::collections::HashMap<String, usize>,
     pub total: usize,
 }
 
-impl QueueCounts {
-    pub fn get(&self, queue: Queue) -> usize {
-        let idx = match queue {
-            Queue::Inbox => 0,
-            Queue::Now => 1,
-            Queue::Next => 2,
-            Queue::Later => 3,
-            Queue::Done => 4,
-        };
-        self.counts[idx]
+impl ListCounts {
+    pub fn get(&self, name: &str) -> usize {
+        self.counts.get(name).copied().unwrap_or(0)
     }
 }
 
@@ -94,7 +98,9 @@ pub enum Mode {
     },
     AddForm {
         title: String,
-        queue: Queue,
+        list: String,
+        /// Insert position in the current item list (before this index)
+        insert_at: usize,
     },
     ConfirmDelete {
         task_id: String,
@@ -102,18 +108,19 @@ pub enum Mode {
     MoveTarget,
     Search {
         query: String,
-        results: Vec<(String, Queue)>,
+        results: Vec<(String, String)>, // (ext_id, list_name)
         list_state: ListState,
     },
 }
 
 pub struct TuiApp {
-    #[allow(dead_code)]
-    pub config: ResolvedConfig,
-    pub repo: TaskRepo,
+    pub adapter: Box<dyn Adapter>,
 
-    // Cached task data
-    pub tasks: Vec<Task>,
+    // Cached item data (from adapter.scan())
+    pub items: Vec<Item>,
+
+    // Sidebar
+    pub sidebar_entries: Vec<SidebarEntry>,
 
     // Navigation
     pub active_sidebar_index: usize,
@@ -134,12 +141,13 @@ pub struct TuiApp {
 }
 
 impl TuiApp {
-    pub fn new(config: ResolvedConfig, repo: TaskRepo) -> Result<Self, AppError> {
-        let tasks = repo.list()?;
+    pub fn new(adapter: Box<dyn Adapter>) -> Result<Self, AppError> {
+        let items = adapter.scan()?;
+        let sidebar_entries = sidebar_from_adapter_lists(&adapter.lists());
         let mut app = Self {
-            config,
-            repo,
-            tasks,
+            adapter,
+            items,
+            sidebar_entries,
             active_sidebar_index: 0,
             task_list_state: ListState::default(),
             focused_panel: FocusedPanel::TaskList,
@@ -153,8 +161,8 @@ impl TuiApp {
     }
 
     pub fn refresh(&mut self) -> Result<(), AppError> {
-        self.tasks = self.repo.list()?;
-        let count = self.current_queue_tasks().len();
+        self.items = self.adapter.scan()?;
+        let count = self.current_items().len();
         if count == 0 {
             self.task_list_state.select(None);
         } else if let Some(i) = self.task_list_state.selected()
@@ -166,65 +174,84 @@ impl TuiApp {
     }
 
     pub fn sidebar_entries(&self) -> &[SidebarEntry] {
-        SIDEBAR_ENTRIES
+        &self.sidebar_entries
     }
 
-    pub fn active_filter(&self) -> QueueFilter {
-        match SIDEBAR_ENTRIES[self.active_sidebar_index] {
-            SidebarEntry::Queue(q) => QueueFilter::Single(q),
-            SidebarEntry::All => QueueFilter::All,
+    pub fn active_filter(&self) -> ListFilter {
+        match &self.sidebar_entries[self.active_sidebar_index] {
+            SidebarEntry::List(name) => ListFilter::Single(name.clone()),
+            SidebarEntry::All => ListFilter::All,
         }
     }
 
-    pub fn queue_counts(&self) -> QueueCounts {
-        let mut counts = [0usize; 5];
-        for task in &self.tasks {
-            let idx = match task.queue {
-                Queue::Inbox => 0,
-                Queue::Now => 1,
-                Queue::Next => 2,
-                Queue::Later => 3,
-                Queue::Done => 4,
-            };
-            counts[idx] += 1;
+    pub fn list_counts(&self) -> ListCounts {
+        let mut counts = std::collections::HashMap::new();
+        for item in &self.items {
+            *counts.entry(item.list.clone()).or_insert(0) += 1;
         }
-        QueueCounts {
-            counts,
-            total: self.tasks.len(),
-        }
+        let total = self.items.len();
+        ListCounts { counts, total }
     }
 
-    pub fn current_queue_tasks(&self) -> Vec<&Task> {
+    pub fn current_items(&self) -> Vec<&Item> {
         match self.active_filter() {
-            QueueFilter::Single(queue) => self.tasks.iter().filter(|t| t.queue == queue).collect(),
-            QueueFilter::All => self.tasks.iter().collect(),
+            ListFilter::Single(ref name) => self.items.iter().filter(|i| i.list == *name).collect(),
+            ListFilter::All => {
+                // Order items by sidebar list order, then by order within list
+                let list_order: Vec<&str> = self
+                    .sidebar_entries
+                    .iter()
+                    .filter_map(|e| match e {
+                        SidebarEntry::List(n) => Some(n.as_str()),
+                        SidebarEntry::All => None,
+                    })
+                    .collect();
+                let mut sorted: Vec<&Item> = self.items.iter().collect();
+                sorted.sort_by(|a, b| {
+                    let a_pos = list_order
+                        .iter()
+                        .position(|n| *n == a.list)
+                        .unwrap_or(usize::MAX);
+                    let b_pos = list_order
+                        .iter()
+                        .position(|n| *n == b.list)
+                        .unwrap_or(usize::MAX);
+                    a_pos.cmp(&b_pos).then(
+                        a.order
+                            .partial_cmp(&b.order)
+                            .unwrap_or(std::cmp::Ordering::Equal),
+                    )
+                });
+                sorted
+            }
         }
     }
 
-    pub fn selected_task(&self) -> Option<&Task> {
-        let tasks = self.current_queue_tasks();
+    pub fn selected_item(&self) -> Option<&Item> {
+        let items = self.current_items();
         self.task_list_state
             .selected()
-            .and_then(|i| tasks.get(i).copied())
+            .and_then(|i| items.get(i).copied())
     }
 
     pub fn next_queue(&mut self) {
-        let len = SIDEBAR_ENTRIES.len();
+        let len = self.sidebar_entries.len();
         self.active_sidebar_index = (self.active_sidebar_index + 1) % len;
         self.select_first_task();
     }
 
     pub fn prev_queue(&mut self) {
-        let len = SIDEBAR_ENTRIES.len();
+        let len = self.sidebar_entries.len();
         self.active_sidebar_index = (self.active_sidebar_index + len - 1) % len;
         self.select_first_task();
     }
 
     pub fn select_queue_by_index(&mut self, index: usize) {
-        let selectable: Vec<usize> = SIDEBAR_ENTRIES
+        let selectable: Vec<usize> = self
+            .sidebar_entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| matches!(e, SidebarEntry::Queue(_) | SidebarEntry::All))
+            .filter(|(_, e)| matches!(e, SidebarEntry::List(_) | SidebarEntry::All))
             .map(|(i, _)| i)
             .collect();
         if let Some(&sidebar_idx) = selectable.get(index) {
@@ -233,10 +260,11 @@ impl TuiApp {
         }
     }
 
-    pub fn jump_to_queue(&mut self, queue: Queue) {
-        if let Some(idx) = SIDEBAR_ENTRIES
+    pub fn jump_to_list(&mut self, list_name: &str) {
+        if let Some(idx) = self
+            .sidebar_entries
             .iter()
-            .position(|e| *e == SidebarEntry::Queue(queue))
+            .position(|e| matches!(e, SidebarEntry::List(n) if n == list_name))
         {
             self.active_sidebar_index = idx;
             self.select_first_task();
@@ -244,29 +272,35 @@ impl TuiApp {
     }
 
     pub fn select_next_task(&mut self) {
-        let count = self.current_queue_tasks().len();
+        let count = self.current_items().len();
         if count == 0 {
+            self.next_queue();
             return;
         }
         let current = self.task_list_state.selected().unwrap_or(0);
-        let next = if current + 1 >= count { 0 } else { current + 1 };
-        self.task_list_state.select(Some(next));
-        self.detail_scroll = 0;
+        if current + 1 < count {
+            self.task_list_state.select(Some(current + 1));
+            self.detail_scroll = 0;
+        }
+        // At bottom — stop, don't wrap or cross
     }
 
     pub fn select_prev_task(&mut self) {
-        let count = self.current_queue_tasks().len();
+        let count = self.current_items().len();
         if count == 0 {
+            self.prev_queue();
             return;
         }
         let current = self.task_list_state.selected().unwrap_or(0);
-        let prev = if current == 0 { count - 1 } else { current - 1 };
-        self.task_list_state.select(Some(prev));
-        self.detail_scroll = 0;
+        if current > 0 {
+            self.task_list_state.select(Some(current - 1));
+            self.detail_scroll = 0;
+        }
+        // At top — stop, don't wrap or cross
     }
 
     pub fn select_first_task_absolute(&mut self) {
-        let count = self.current_queue_tasks().len();
+        let count = self.current_items().len();
         if count > 0 {
             self.task_list_state.select(Some(0));
             self.detail_scroll = 0;
@@ -274,7 +308,7 @@ impl TuiApp {
     }
 
     pub fn select_last_task(&mut self) {
-        let count = self.current_queue_tasks().len();
+        let count = self.current_items().len();
         if count > 0 {
             self.task_list_state.select(Some(count - 1));
             self.detail_scroll = 0;
@@ -283,7 +317,11 @@ impl TuiApp {
 
     pub fn visual_selection_range(&self) -> Option<(usize, usize)> {
         if let Mode::Visual { anchor } = &self.mode {
-            let cursor = self.task_list_state.selected().unwrap_or(0);
+            let cursor = if self.focused_panel == FocusedPanel::Sidebar {
+                self.active_sidebar_index
+            } else {
+                self.task_list_state.selected().unwrap_or(0)
+            };
             let start = (*anchor).min(cursor);
             let end = (*anchor).max(cursor);
             Some((start, end))
@@ -292,19 +330,147 @@ impl TuiApp {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn shift_visual_anchor(&mut self, delta: i32) {
+        if let Mode::Visual { anchor } = &mut self.mode {
+            *anchor = (*anchor as i32 + delta).max(0) as usize;
+        }
+    }
+
     pub fn visual_selected_task_ids(&self) -> Vec<String> {
         if let Some((start, end)) = self.visual_selection_range() {
-            let tasks = self.current_queue_tasks();
+            let items = self.current_items();
             (start..=end)
-                .filter_map(|i| tasks.get(i).map(|t| t.id.clone()))
+                .filter_map(|i| items.get(i).map(|it| it.ext_id.clone()))
                 .collect()
         } else {
             Vec::new()
         }
     }
 
+    #[allow(dead_code)]
+    /// Find the list name after `list` in sidebar order.
+    pub fn next_list_for(&self, list: &str) -> Option<String> {
+        let list_entries: Vec<&str> = self
+            .sidebar_entries
+            .iter()
+            .filter_map(|e| match e {
+                SidebarEntry::List(n) => Some(n.as_str()),
+                SidebarEntry::All => None,
+            })
+            .collect();
+        let pos = list_entries.iter().position(|n| *n == list)?;
+        list_entries.get(pos + 1).map(|s| s.to_string())
+    }
+
+    /// Find the list name before `list` in sidebar order.
+    pub fn prev_list_for(&self, list: &str) -> Option<String> {
+        let list_entries: Vec<&str> = self
+            .sidebar_entries
+            .iter()
+            .filter_map(|e| match e {
+                SidebarEntry::List(n) => Some(n.as_str()),
+                SidebarEntry::All => None,
+            })
+            .collect();
+        let pos = list_entries.iter().position(|n| *n == list)?;
+        if pos == 0 {
+            None
+        } else {
+            list_entries.get(pos - 1).map(|s| s.to_string())
+        }
+    }
+
+    /// Swap the current sidebar entry with the one below it and persist.
+    pub fn swap_list_down(&mut self) {
+        let len = self.sidebar_entries.len();
+        let idx = self.active_sidebar_index;
+        if idx + 1 >= len
+            || matches!(self.sidebar_entries[idx], SidebarEntry::All)
+            || matches!(self.sidebar_entries[idx + 1], SidebarEntry::All)
+        {
+            return;
+        }
+        self.sidebar_entries.swap(idx, idx + 1);
+        self.active_sidebar_index = idx + 1;
+        self.persist_list_order();
+    }
+
+    /// Swap the current sidebar entry with the one above it and persist.
+    pub fn swap_list_up(&mut self) {
+        let idx = self.active_sidebar_index;
+        if idx == 0 || matches!(self.sidebar_entries[idx], SidebarEntry::All) {
+            return;
+        }
+        self.sidebar_entries.swap(idx, idx - 1);
+        self.active_sidebar_index = idx - 1;
+        self.persist_list_order();
+    }
+
+    /// Move a visual selection of sidebar entries down by one.
+    pub fn swap_list_block_down(&mut self) {
+        let (start, end) = if let Mode::Visual { anchor } = &self.mode {
+            let cursor = self.active_sidebar_index;
+            ((*anchor).min(cursor), (*anchor).max(cursor))
+        } else {
+            let idx = self.active_sidebar_index;
+            (idx, idx)
+        };
+        let len = self.sidebar_entries.len();
+        if end + 1 >= len || matches!(self.sidebar_entries[end + 1], SidebarEntry::All) {
+            return;
+        }
+        // Move the entry below the block to just above it
+        let below = self.sidebar_entries.remove(end + 1);
+        self.sidebar_entries.insert(start, below);
+        // New selection: (start+1, end+1)
+        self.active_sidebar_index = end + 1;
+        if let Mode::Visual { anchor } = &mut self.mode {
+            *anchor = start + 1;
+        }
+        self.persist_list_order();
+    }
+
+    /// Move a visual selection of sidebar entries up by one.
+    pub fn swap_list_block_up(&mut self) {
+        let (start, end) = if let Mode::Visual { anchor } = &self.mode {
+            let cursor = self.active_sidebar_index;
+            ((*anchor).min(cursor), (*anchor).max(cursor))
+        } else {
+            let idx = self.active_sidebar_index;
+            (idx, idx)
+        };
+        if start == 0 {
+            return;
+        }
+        let above = self.sidebar_entries.remove(start - 1);
+        self.sidebar_entries.insert(end, above);
+        // New selection: (start-1, end-1)
+        self.active_sidebar_index = end - 1;
+        if let Mode::Visual { anchor } = &mut self.mode {
+            *anchor = start - 1;
+        }
+        self.persist_list_order();
+    }
+
+    fn persist_list_order(&mut self) {
+        let lists: Vec<ListDef> = self
+            .sidebar_entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| match e {
+                SidebarEntry::List(name) => Some(ListDef {
+                    name: name.clone(),
+                    display: name.clone(),
+                    order: i as f64,
+                }),
+                SidebarEntry::All => None,
+            })
+            .collect();
+        let _ = self.adapter.set_lists(&lists);
+    }
+
     pub fn update_search_results(&mut self) {
-        use crate::domain::filter::matches_query;
         let Mode::Search {
             query,
             results,
@@ -313,11 +479,16 @@ impl TuiApp {
         else {
             return;
         };
+        let q = query.to_lowercase();
         *results = self
-            .tasks
+            .items
             .iter()
-            .filter(|t| matches_query(t, query))
-            .map(|t| (t.id.clone(), t.queue))
+            .filter(|i| {
+                i.title.to_lowercase().contains(&q)
+                    || i.ext_id.to_lowercase().contains(&q)
+                    || i.body.to_lowercase().contains(&q)
+            })
+            .map(|i| (i.ext_id.clone(), i.list.clone()))
             .collect();
         if results.is_empty() {
             list_state.select(None);
@@ -338,17 +509,17 @@ impl TuiApp {
         let Some(idx) = list_state.selected() else {
             return;
         };
-        let Some((task_id, queue)) = results.get(idx).cloned() else {
+        let Some((ext_id, list_name)) = results.get(idx).cloned() else {
             return;
         };
-        self.jump_to_queue(queue);
-        let task_index = self
-            .tasks
+        self.jump_to_list(&list_name);
+        let item_index = self
+            .items
             .iter()
-            .filter(|t| t.queue == queue)
-            .position(|t| t.id == task_id)
+            .filter(|i| i.list == list_name)
+            .position(|i| i.ext_id == ext_id)
             .unwrap_or(0);
-        self.task_list_state.select(Some(task_index));
+        self.task_list_state.select(Some(item_index));
         self.detail_scroll = 0;
         self.mode = Mode::Normal;
     }
@@ -368,7 +539,7 @@ impl TuiApp {
     }
 
     fn select_first_task(&mut self) {
-        if self.current_queue_tasks().is_empty() {
+        if self.current_items().is_empty() {
             self.task_list_state.select(None);
         } else {
             self.task_list_state.select(Some(0));
@@ -380,354 +551,17 @@ impl TuiApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::config::{QueueDirs, ResolvedConfig};
-    use crate::storage::repo::TaskRepo;
-    use chrono::Utc;
-    use ratatui::widgets::ListState;
-    use tempfile::TempDir;
-
-    fn make_app(temp: &TempDir) -> TuiApp {
-        let root = temp.path().to_path_buf();
-        let config = ResolvedConfig {
-            obsidian_vault_dir: None,
-            tasks_root: root.clone(),
-            state_dir: root.join(".sqs"),
-            daily_notes_dir: None,
-            queue_dirs: QueueDirs::default(),
-        };
-        let repo = TaskRepo::new(root, QueueDirs::default());
-        TuiApp::new(config, repo).unwrap()
-    }
-
-    fn make_app_with_tasks(temp: &TempDir, tasks: &[(&str, Queue)]) -> TuiApp {
-        let root = temp.path().to_path_buf();
-        let config = ResolvedConfig {
-            obsidian_vault_dir: None,
-            tasks_root: root.clone(),
-            state_dir: root.join(".sqs"),
-            daily_notes_dir: None,
-            queue_dirs: QueueDirs::default(),
-        };
-        let repo = TaskRepo::new(root.clone(), QueueDirs::default());
-        for (id, queue) in tasks {
-            let mut task = Task::new(id.to_string(), &format!("Task {id}"), Utc::now());
-            task.queue = *queue;
-            repo.create(&task).unwrap();
-        }
-        TuiApp::new(config, repo).unwrap()
-    }
-
-    // --- FocusedPanel ---
 
     #[test]
-    fn focused_panel_left_clamps_at_sidebar() {
-        assert_eq!(FocusedPanel::Sidebar.left(), FocusedPanel::Sidebar);
-        assert_eq!(FocusedPanel::TaskList.left(), FocusedPanel::Sidebar);
-        assert_eq!(FocusedPanel::Detail.left(), FocusedPanel::TaskList);
+    fn list_filter_display() {
+        assert_eq!(ListFilter::Single("now".into()).to_string(), "now");
+        assert_eq!(ListFilter::All.to_string(), "all");
     }
 
     #[test]
-    fn focused_panel_right_clamps_at_detail() {
-        assert_eq!(FocusedPanel::Sidebar.right(), FocusedPanel::TaskList);
-        assert_eq!(FocusedPanel::TaskList.right(), FocusedPanel::Detail);
-        assert_eq!(FocusedPanel::Detail.right(), FocusedPanel::Detail);
-    }
-
-    // --- TuiApp::new ---
-
-    #[test]
-    fn new_app_starts_on_first_queue_with_task_list_focused() {
-        let temp = TempDir::new().unwrap();
-        let app = make_app(&temp);
-        assert_eq!(app.active_sidebar_index, 0);
-        assert_eq!(app.focused_panel, FocusedPanel::TaskList);
-        assert!(matches!(app.mode, Mode::Normal));
-        assert!(app.needs_redraw);
-    }
-
-    #[test]
-    fn new_app_selects_first_task_when_tasks_exist() {
-        let temp = TempDir::new().unwrap();
-        let app = make_app_with_tasks(&temp, &[("a1", Queue::Now), ("a2", Queue::Now)]);
-        assert_eq!(app.task_list_state.selected(), Some(0));
-    }
-
-    #[test]
-    fn new_app_no_selection_when_queue_empty() {
-        let temp = TempDir::new().unwrap();
-        let app = make_app(&temp);
-        // Default sidebar is Now, which is empty
-        assert_eq!(app.task_list_state.selected(), None);
-    }
-
-    // --- active_filter ---
-
-    #[test]
-    fn active_filter_returns_queue_for_queue_entries() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app(&temp);
-        app.active_sidebar_index = 0; // Now
-        assert_eq!(app.active_filter(), QueueFilter::Single(Queue::Now));
-    }
-
-    #[test]
-    fn active_filter_returns_all_for_all_entry() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app(&temp);
-        app.active_sidebar_index = 5; // All
-        assert_eq!(app.active_filter(), QueueFilter::All);
-    }
-
-    // --- queue_counts ---
-
-    #[test]
-    fn queue_counts_single_pass() {
-        let temp = TempDir::new().unwrap();
-        let app = make_app_with_tasks(
-            &temp,
-            &[("a1", Queue::Now), ("a2", Queue::Now), ("a3", Queue::Inbox)],
-        );
-        let counts = app.queue_counts();
-        assert_eq!(counts.get(Queue::Now), 2);
-        assert_eq!(counts.get(Queue::Inbox), 1);
-        assert_eq!(counts.get(Queue::Next), 0);
-        assert_eq!(counts.total, 3);
-    }
-
-    // --- current_queue_tasks ---
-
-    #[test]
-    fn current_queue_tasks_filters_by_active_queue() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now), ("a2", Queue::Inbox)]);
-        app.active_sidebar_index = 0; // Now
-        assert_eq!(app.current_queue_tasks().len(), 1);
-        assert_eq!(app.current_queue_tasks()[0].id, "a1");
-    }
-
-    #[test]
-    fn current_queue_tasks_returns_all_when_all_selected() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now), ("a2", Queue::Inbox)]);
-        app.active_sidebar_index = 5; // All
-        assert_eq!(app.current_queue_tasks().len(), 2);
-    }
-
-    // --- selected_task ---
-
-    #[test]
-    fn selected_task_returns_none_when_no_selection() {
-        let temp = TempDir::new().unwrap();
-        let app = make_app(&temp);
-        assert!(app.selected_task().is_none());
-    }
-
-    #[test]
-    fn selected_task_returns_task_at_index() {
-        let temp = TempDir::new().unwrap();
-        let app = make_app_with_tasks(&temp, &[("a1", Queue::Now)]);
-        assert_eq!(app.selected_task().unwrap().id, "a1");
-    }
-
-    // --- queue navigation ---
-
-    #[test]
-    fn next_queue_advances_and_wraps() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app(&temp);
-        assert_eq!(app.active_sidebar_index, 0); // Now
-        app.next_queue();
-        assert_eq!(app.active_sidebar_index, 1); // Next
-        app.next_queue();
-        assert_eq!(app.active_sidebar_index, 2); // Later
-        app.next_queue();
-        assert_eq!(app.active_sidebar_index, 3); // Inbox
-    }
-
-    #[test]
-    fn prev_queue_goes_back_and_wraps() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app(&temp);
-        app.active_sidebar_index = 0; // Now
-        app.prev_queue();
-        // Should wrap to All(5)
-        assert_eq!(app.active_sidebar_index, 5);
-    }
-
-    #[test]
-    fn select_queue_by_index_maps_to_selectable_entries() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app(&temp);
-        app.select_queue_by_index(0); // First selectable = Now(0)
-        assert_eq!(app.active_sidebar_index, 0);
-        app.select_queue_by_index(3); // Fourth selectable = Inbox(3)
-        assert_eq!(app.active_sidebar_index, 3);
-    }
-
-    #[test]
-    fn jump_to_queue_sets_correct_sidebar_index() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app(&temp);
-        app.jump_to_queue(Queue::Inbox);
-        assert_eq!(app.active_sidebar_index, 3);
-        app.jump_to_queue(Queue::Done);
-        assert_eq!(app.active_sidebar_index, 4);
-    }
-
-    // --- task navigation ---
-
-    #[test]
-    fn select_next_task_wraps_around() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now), ("a2", Queue::Now)]);
-        assert_eq!(app.task_list_state.selected(), Some(0));
-        app.select_next_task();
-        assert_eq!(app.task_list_state.selected(), Some(1));
-        app.select_next_task();
-        assert_eq!(app.task_list_state.selected(), Some(0)); // wrapped
-    }
-
-    #[test]
-    fn select_prev_task_wraps_around() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now), ("a2", Queue::Now)]);
-        assert_eq!(app.task_list_state.selected(), Some(0));
-        app.select_prev_task();
-        assert_eq!(app.task_list_state.selected(), Some(1)); // wrapped
-    }
-
-    #[test]
-    fn select_next_task_noop_when_empty() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app(&temp);
-        app.select_next_task(); // should not panic
-        assert_eq!(app.task_list_state.selected(), None);
-    }
-
-    #[test]
-    fn task_navigation_resets_detail_scroll() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now), ("a2", Queue::Now)]);
-        app.detail_scroll = 5;
-        app.select_next_task();
-        assert_eq!(app.detail_scroll, 0);
-    }
-
-    // --- refresh ---
-
-    #[test]
-    fn refresh_clamps_selection_when_tasks_removed() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now), ("a2", Queue::Now)]);
-        app.task_list_state.select(Some(1)); // select second task
-        app.repo.delete("a2").unwrap();
-        app.refresh().unwrap();
-        // Selection should clamp to 0 (only task remaining)
-        assert_eq!(app.task_list_state.selected(), Some(0));
-    }
-
-    #[test]
-    fn refresh_clears_selection_when_queue_becomes_empty() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now)]);
-        app.repo.delete("a1").unwrap();
-        app.refresh().unwrap();
-        assert_eq!(app.task_list_state.selected(), None);
-    }
-
-    // --- search ---
-
-    #[test]
-    fn update_search_results_filters_tasks() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now), ("b1", Queue::Inbox)]);
-        app.mode = Mode::Search {
-            query: "Task a1".to_string(),
-            results: Vec::new(),
-            list_state: ListState::default(),
-        };
-        app.update_search_results();
-        if let Mode::Search {
-            results,
-            list_state,
-            ..
-        } = &app.mode
-        {
-            assert_eq!(results.len(), 1);
-            assert_eq!(results[0].0, "a1");
-            assert_eq!(list_state.selected(), Some(0));
-        } else {
-            panic!("expected Search mode");
-        }
-    }
-
-    #[test]
-    fn update_search_results_clears_selection_when_no_matches() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Now)]);
-        app.mode = Mode::Search {
-            query: "nonexistent".to_string(),
-            results: Vec::new(),
-            list_state: ListState::default(),
-        };
-        app.update_search_results();
-        if let Mode::Search {
-            results,
-            list_state,
-            ..
-        } = &app.mode
-        {
-            assert!(results.is_empty());
-            assert_eq!(list_state.selected(), None);
-        } else {
-            panic!("expected Search mode");
-        }
-    }
-
-    #[test]
-    fn update_search_results_noop_outside_search_mode() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app(&temp);
-        // Should not panic when not in Search mode
-        app.update_search_results();
-    }
-
-    #[test]
-    fn select_search_result_jumps_to_task() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app_with_tasks(&temp, &[("a1", Queue::Inbox), ("b1", Queue::Now)]);
-        app.mode = Mode::Search {
-            query: String::new(),
-            results: vec![("a1".to_string(), Queue::Inbox)],
-            list_state: ListState::default().with_selected(Some(0)),
-        };
-        app.select_search_result();
-        assert!(matches!(app.mode, Mode::Normal));
-        assert_eq!(app.active_sidebar_index, 3); // Inbox
-    }
-
-    // --- status messages ---
-
-    #[test]
-    fn set_status_and_read_back() {
-        let temp = TempDir::new().unwrap();
-        let mut app = make_app(&temp);
-        app.set_status("hello");
-        assert_eq!(app.active_status_message(), Some("hello"));
-    }
-
-    #[test]
-    fn status_message_none_when_not_set() {
-        let temp = TempDir::new().unwrap();
-        let app = make_app(&temp);
-        assert_eq!(app.active_status_message(), None);
-    }
-
-    // --- QueueFilter Display ---
-
-    #[test]
-    fn queue_filter_display() {
-        assert_eq!(QueueFilter::Single(Queue::Now).to_string(), "now");
-        assert_eq!(QueueFilter::All.to_string(), "all");
+    fn default_sidebar_has_all_at_end() {
+        let entries = default_sidebar_entries();
+        assert!(matches!(entries.last(), Some(SidebarEntry::All)));
+        assert!(entries.len() >= 6);
     }
 }

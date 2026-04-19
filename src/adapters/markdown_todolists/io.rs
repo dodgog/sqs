@@ -97,23 +97,23 @@ pub fn write_lists_yaml(root: &Path, lists: &[ListDef]) -> Result<(), AppError> 
 pub fn default_lists() -> Vec<ListDef> {
     vec![
         ListDef {
-            name: "inbox".into(),
-            display: "Inbox".into(),
-            order: 0.0,
-        },
-        ListDef {
             name: "now".into(),
             display: "Now".into(),
-            order: 1.0,
+            order: 0.0,
         },
         ListDef {
             name: "next".into(),
             display: "Next".into(),
-            order: 2.0,
+            order: 1.0,
         },
         ListDef {
             name: "later".into(),
             display: "Later".into(),
+            order: 2.0,
+        },
+        ListDef {
+            name: "inbox".into(),
+            display: "Inbox".into(),
             order: 3.0,
         },
         ListDef {
@@ -195,7 +195,7 @@ mod tests {
         write_lists_yaml(temp.path(), &lists).unwrap();
         let loaded = read_lists_yaml(temp.path()).unwrap();
         assert_eq!(loaded.len(), 5);
-        assert_eq!(loaded[0].name, "inbox");
+        assert_eq!(loaded[0].name, "now");
         assert_eq!(loaded[4].name, "done");
     }
 

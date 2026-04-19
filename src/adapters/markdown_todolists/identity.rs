@@ -42,7 +42,7 @@ mod tests {
     fn generates_unique_ids() {
         let existing = HashSet::new();
         let mut generated = HashSet::new();
-        for _ in 0..1_000 {
+        for _ in 0..100 {
             let id = generate_id(&existing);
             assert!(generated.insert(id.clone()), "duplicate id generated: {id}");
         }

@@ -16,18 +16,17 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
+use crate::adapter::Adapter;
 use crate::app::app_error::AppError;
-use crate::storage::config::ResolvedConfig;
 use crate::storage::editor::ResolvedEditor;
-use crate::storage::repo::TaskRepo;
 
 use actions::SideEffect;
 use app_state::TuiApp;
 
 const POLL_TIMEOUT: Duration = Duration::from_millis(250);
 
-pub fn run(config: ResolvedConfig, repo: TaskRepo) -> Result<(), AppError> {
-    let mut app = TuiApp::new(config, repo)?;
+pub fn run(adapter: Box<dyn Adapter>) -> Result<(), AppError> {
+    let mut app = TuiApp::new(adapter)?;
 
     // Set up terminal
     enable_raw_mode().map_err(|e| AppError::message(format!("failed to enable raw mode: {e}")))?;
@@ -122,24 +121,23 @@ fn suspend_for_editor(
     Ok(())
 }
 
-fn run_editor(app: &TuiApp, task_id: &str) -> Result<(), AppError> {
-    let stored = app.repo.find_by_id(task_id)?;
-    let original_content = std::fs::read_to_string(&stored.path)?;
+fn run_editor(app: &mut TuiApp, task_id: &str) -> Result<(), AppError> {
+    let path = app.adapter.editor_path(task_id)?;
+    let original_content = std::fs::read_to_string(&path)?;
 
     let editor = ResolvedEditor::resolve()?;
-    // Flush stdout before spawning editor
     io::stdout().flush().ok();
 
     let status = Command::new(&editor.program)
         .args(&editor.args)
-        .arg(&stored.path)
+        .arg(&path)
         .status()?;
 
     if !status.success() {
         return Err(AppError::message("editor command failed"));
     }
 
-    crate::app::operations::apply_edit(&app.repo, task_id, &stored.path, &original_content)?;
+    app.adapter.apply_edit(task_id, &path, &original_content)?;
     Ok(())
 }
 

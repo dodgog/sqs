@@ -26,8 +26,12 @@ pub fn handle(cli: Cli) -> Result<(), AppError> {
 
 fn handle_tui(root: Option<std::path::PathBuf>) -> Result<(), AppError> {
     let resolved = config::resolve(root)?;
-    let repo = helpers::repo_from_config(&resolved);
-    crate::tui::run(resolved, repo)
+    let adapter = Box::new(
+        crate::adapters::markdown_todolists::MarkdownTodolistsAdapter::new(
+            resolved.tasks_root.clone(),
+        ),
+    );
+    crate::tui::run(adapter)
 }
 
 fn handle_default(root: Option<std::path::PathBuf>) -> Result<(), AppError> {

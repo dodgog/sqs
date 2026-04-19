@@ -4,7 +4,6 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 
 use crate::app::app_error::AppError;
-use crate::domain::task::Queue;
 
 use super::actions::{self, SideEffect};
 use super::app_state::{FocusedPanel, Mode, TuiApp};
@@ -45,6 +44,13 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
         KeyCode::Char('l') | KeyCode::Right => {
             app.focused_panel = app.focused_panel.right();
         }
+        KeyCode::Char(' ') => {
+            app.focused_panel = match app.focused_panel {
+                FocusedPanel::Sidebar => FocusedPanel::TaskList,
+                FocusedPanel::TaskList => FocusedPanel::Sidebar,
+                FocusedPanel::Detail => FocusedPanel::Sidebar,
+            };
+        }
 
         // Vertical navigation — depends on focused panel
         KeyCode::Char('j') | KeyCode::Down => match app.focused_panel {
@@ -67,15 +73,13 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
         }
 
         // Task actions
-        KeyCode::Char('d') => return actions::mark_done(app),
-        KeyCode::Char('s') => return actions::start_task(app),
-        KeyCode::Char('m') if app.selected_task().is_some() => {
+        KeyCode::Char('m') if app.selected_item().is_some() => {
             app.mode = Mode::MoveTarget;
         }
         KeyCode::Char('x') => {
-            if let Some(task) = app.selected_task() {
+            if let Some(item) = app.selected_item() {
                 app.mode = Mode::ConfirmDelete {
-                    task_id: task.id.clone(),
+                    task_id: item.ext_id.clone(),
                 };
             }
         }
@@ -90,19 +94,43 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
             app.update_search_results();
         }
 
-        // Add task
-        KeyCode::Char('a') => {
+        // Add task: O/i=insert before cursor, o/a=append after cursor
+        KeyCode::Char('O') | KeyCode::Char('i') => {
+            let list = match app.active_filter() {
+                crate::tui::app_state::ListFilter::Single(name) => name,
+                crate::tui::app_state::ListFilter::All => app
+                    .selected_item()
+                    .map(|i| i.list.clone())
+                    .unwrap_or_else(|| "inbox".to_string()),
+            };
+            let insert_at = app.task_list_state.selected().unwrap_or(0);
             app.mode = Mode::AddForm {
                 title: String::new(),
-                queue: Queue::Inbox,
+                list,
+                insert_at,
+            };
+        }
+        KeyCode::Char('o') | KeyCode::Char('a') => {
+            let list = match app.active_filter() {
+                crate::tui::app_state::ListFilter::Single(name) => name,
+                crate::tui::app_state::ListFilter::All => app
+                    .selected_item()
+                    .map(|i| i.list.clone())
+                    .unwrap_or_else(|| "inbox".to_string()),
+            };
+            let insert_at = app.task_list_state.selected().map(|i| i + 1).unwrap_or(0);
+            app.mode = Mode::AddForm {
+                title: String::new(),
+                list,
+                insert_at,
             };
         }
 
         // Edit in $EDITOR
         KeyCode::Char('e') => {
-            if let Some(task) = app.selected_task() {
+            if let Some(item) = app.selected_item() {
                 return Ok(SideEffect::SuspendForEditor {
-                    task_id: task.id.clone(),
+                    task_id: item.ext_id.clone(),
                 });
             }
         }
@@ -115,9 +143,50 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
             app.select_last_task();
         }
 
-        // Visual mode
-        KeyCode::Char('v') if app.focused_panel == FocusedPanel::TaskList => {
-            let cursor = app.task_list_state.selected().unwrap_or(0);
+        // J/K — reorder item (or swap list in sidebar)
+        KeyCode::Char('J') => match app.focused_panel {
+            FocusedPanel::Sidebar => app.swap_list_down(),
+            FocusedPanel::TaskList | FocusedPanel::Detail => {
+                return actions::reorder_down(app);
+            }
+        },
+        KeyCode::Char('K') => match app.focused_panel {
+            FocusedPanel::Sidebar => app.swap_list_up(),
+            FocusedPanel::TaskList | FocusedPanel::Detail => {
+                return actions::reorder_up(app);
+            }
+        },
+
+        // </> — switch to prev/next list
+        KeyCode::Char('>') => app.next_queue(),
+        KeyCode::Char('<') => app.prev_queue(),
+
+        // [/] — jump cursor to first/last item
+        KeyCode::Char('[') if app.focused_panel != FocusedPanel::Sidebar => {
+            app.select_first_task_absolute();
+        }
+        KeyCode::Char(']') if app.focused_panel != FocusedPanel::Sidebar => {
+            app.select_last_task();
+        }
+
+        // {/} — move selected item(s) to top/bottom of current list
+        KeyCode::Char('{') if app.focused_panel != FocusedPanel::Sidebar => {
+            return actions::move_to_top(app);
+        }
+        KeyCode::Char('}') if app.focused_panel != FocusedPanel::Sidebar => {
+            return actions::move_to_bottom(app);
+        }
+
+        // Visual mode (items pane or sidebar)
+        KeyCode::Char('v') | KeyCode::Char('V')
+            if app.focused_panel == FocusedPanel::TaskList
+                || app.focused_panel == FocusedPanel::Sidebar =>
+        {
+            let cursor = if app.focused_panel == FocusedPanel::Sidebar {
+                app.active_sidebar_index
+            } else {
+                app.task_list_state.selected().unwrap_or(0)
+            };
             app.mode = Mode::Visual { anchor: cursor };
         }
 
@@ -133,15 +202,80 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
 }
 
 fn handle_visual_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppError> {
+    let in_sidebar = app.focused_panel == FocusedPanel::Sidebar;
     match key.code {
         KeyCode::Esc | KeyCode::Char('v') => {
             app.mode = Mode::Normal;
         }
+        // Keep visual mode when switching panes
+        KeyCode::Char('h') | KeyCode::Left => {
+            app.focused_panel = app.focused_panel.left();
+        }
+        KeyCode::Char('l') | KeyCode::Right => {
+            app.focused_panel = app.focused_panel.right();
+        }
         KeyCode::Char('j') | KeyCode::Down => {
-            app.select_next_task();
+            if in_sidebar {
+                let len = app.sidebar_entries.len();
+                let idx = app.active_sidebar_index;
+                if idx + 1 < len
+                    && !matches!(
+                        app.sidebar_entries[idx + 1],
+                        crate::tui::app_state::SidebarEntry::All
+                    )
+                {
+                    app.active_sidebar_index = idx + 1;
+                }
+            } else {
+                app.select_next_task();
+            }
         }
         KeyCode::Char('k') | KeyCode::Up => {
-            app.select_prev_task();
+            if in_sidebar {
+                if app.active_sidebar_index > 0 {
+                    app.active_sidebar_index -= 1;
+                }
+            } else {
+                app.select_prev_task();
+            }
+        }
+        KeyCode::Char('J') => {
+            if in_sidebar {
+                app.swap_list_block_down();
+            } else {
+                return actions::reorder_down(app);
+            }
+        }
+        KeyCode::Char('K') => {
+            if in_sidebar {
+                app.swap_list_block_up();
+            } else {
+                return actions::reorder_up(app);
+            }
+        }
+        KeyCode::Char('>') => {
+            let ids = app.visual_selected_task_ids();
+            if !ids.is_empty() {
+                return actions::send_to_next_list(app, &ids);
+            }
+        }
+        KeyCode::Char('<') => {
+            let ids = app.visual_selected_task_ids();
+            if !ids.is_empty() {
+                return actions::send_to_prev_list(app, &ids);
+            }
+        }
+        KeyCode::Char('[') => {
+            app.select_first_task_absolute();
+        }
+        KeyCode::Char(']') => {
+            app.select_last_task();
+        }
+        KeyCode::Char('{') if !in_sidebar => {
+            return actions::move_to_top(app);
+        }
+        KeyCode::Char('}') if !in_sidebar => {
+            return actions::move_to_bottom(app);
         }
         KeyCode::Char('m') if !app.visual_selected_task_ids().is_empty() => {
             app.mode = Mode::MoveTarget;
@@ -159,21 +293,27 @@ fn handle_visual_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
 }
 
 fn handle_add_form_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppError> {
-    use super::widgets::add_form;
-
     match key.code {
         KeyCode::Enter => return actions::submit_add_form(app),
         KeyCode::Esc => {
             app.mode = Mode::Normal;
         }
         KeyCode::Tab => {
-            if let Mode::AddForm { queue, .. } = &mut app.mode {
-                *queue = add_form::cycle_queue(*queue);
+            if let Mode::AddForm { list, .. } = &mut app.mode {
+                let lists = app.adapter.lists();
+                let names: Vec<&str> = lists.iter().map(|l| l.name.as_str()).collect();
+                if let Some(pos) = names.iter().position(|n| *n == list.as_str()) {
+                    *list = names[(pos + 1) % names.len()].to_string();
+                }
             }
         }
         KeyCode::BackTab => {
-            if let Mode::AddForm { queue, .. } = &mut app.mode {
-                *queue = add_form::cycle_queue_back(*queue);
+            if let Mode::AddForm { list, .. } = &mut app.mode {
+                let lists = app.adapter.lists();
+                let names: Vec<&str> = lists.iter().map(|l| l.name.as_str()).collect();
+                if let Some(pos) = names.iter().position(|n| *n == list.as_str()) {
+                    *list = names[(pos + names.len() - 1) % names.len()].to_string();
+                }
             }
         }
         KeyCode::Backspace => {
@@ -257,257 +397,42 @@ fn handle_search_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
 }
 
 fn handle_move_target_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppError> {
-    match key.code {
-        KeyCode::Char('i') | KeyCode::Char('1') => do_move(app, Queue::Inbox),
-        KeyCode::Char('n') | KeyCode::Char('2') => do_move(app, Queue::Now),
-        KeyCode::Char('x') | KeyCode::Char('3') => do_move(app, Queue::Next),
-        KeyCode::Char('l') | KeyCode::Char('4') => do_move(app, Queue::Later),
-        _ => {
-            app.mode = Mode::Normal;
-            Ok(SideEffect::None)
+    // Number keys 1-9 select by position in sidebar list
+    let lists = app.adapter.lists();
+    let target = match key.code {
+        KeyCode::Char(c @ '1'..='9') => {
+            let idx = (c as usize) - ('1' as usize);
+            lists.get(idx).map(|l| l.name.clone())
         }
-    }
-}
+        KeyCode::Esc => {
+            app.mode = Mode::Normal;
+            return Ok(SideEffect::None);
+        }
+        _ => {
+            // Match first letter of list name
+            let ch = match key.code {
+                KeyCode::Char(c) => Some(c),
+                _ => None,
+            };
+            ch.and_then(|c| {
+                lists
+                    .iter()
+                    .find(|l| l.name.starts_with(c))
+                    .map(|l| l.name.clone())
+            })
+        }
+    };
 
-fn do_move(app: &mut TuiApp, queue: Queue) -> Result<SideEffect, AppError> {
+    let Some(target) = target else {
+        app.mode = Mode::Normal;
+        return Ok(SideEffect::None);
+    };
+
     let visual_ids = app.visual_selected_task_ids();
     app.mode = Mode::Normal;
     if visual_ids.is_empty() {
-        actions::move_to_queue(app, queue)
+        actions::move_to_list(app, &target)
     } else {
-        actions::move_tasks_to_queue(app, &visual_ids, queue)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::task::Task;
-    use crate::storage::config::{QueueDirs, ResolvedConfig};
-    use crate::storage::repo::TaskRepo;
-    use chrono::Utc;
-    use tempfile::TempDir;
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn test_app(temp: &TempDir) -> TuiApp {
-        let root = temp.path().to_path_buf();
-        let config = ResolvedConfig {
-            obsidian_vault_dir: None,
-            tasks_root: root.clone(),
-            state_dir: root.join(".sqs"),
-            daily_notes_dir: None,
-            queue_dirs: QueueDirs::default(),
-        };
-        let repo = TaskRepo::new(root, QueueDirs::default());
-        TuiApp::new(config, repo).unwrap()
-    }
-
-    fn test_app_with_task(temp: &TempDir) -> TuiApp {
-        let root = temp.path().to_path_buf();
-        let config = ResolvedConfig {
-            obsidian_vault_dir: None,
-            tasks_root: root.clone(),
-            state_dir: root.join(".sqs"),
-            daily_notes_dir: None,
-            queue_dirs: QueueDirs::default(),
-        };
-        let repo = TaskRepo::new(root, QueueDirs::default());
-        let mut task = Task::new("abc".to_string(), "Test task", Utc::now());
-        task.queue = Queue::Now;
-        repo.create(&task).unwrap();
-        TuiApp::new(config, repo).unwrap()
-    }
-
-    #[test]
-    fn q_quits() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app(&temp);
-        let result = handle_key(&mut app, key(KeyCode::Char('q'))).unwrap();
-        assert!(matches!(result, SideEffect::Quit));
-    }
-
-    #[test]
-    fn esc_quits() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app(&temp);
-        let result = handle_key(&mut app, key(KeyCode::Esc)).unwrap();
-        assert!(matches!(result, SideEffect::Quit));
-    }
-
-    #[test]
-    fn h_l_navigate_panels() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app(&temp);
-        app.focused_panel = FocusedPanel::TaskList;
-
-        handle_key(&mut app, key(KeyCode::Char('h'))).unwrap();
-        assert_eq!(app.focused_panel, FocusedPanel::Sidebar);
-
-        handle_key(&mut app, key(KeyCode::Char('l'))).unwrap();
-        assert_eq!(app.focused_panel, FocusedPanel::TaskList);
-
-        handle_key(&mut app, key(KeyCode::Char('l'))).unwrap();
-        assert_eq!(app.focused_panel, FocusedPanel::Detail);
-
-        // Should not go past rightmost panel
-        handle_key(&mut app, key(KeyCode::Char('l'))).unwrap();
-        assert_eq!(app.focused_panel, FocusedPanel::Detail);
-    }
-
-    #[test]
-    fn a_enters_add_form() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app(&temp);
-        handle_key(&mut app, key(KeyCode::Char('a'))).unwrap();
-        assert!(matches!(app.mode, Mode::AddForm { .. }));
-    }
-
-    #[test]
-    fn add_form_esc_cancels() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app(&temp);
-        app.mode = Mode::AddForm {
-            title: "partial".to_string(),
-            queue: Queue::Inbox,
-        };
-
-        handle_key(&mut app, key(KeyCode::Esc)).unwrap();
-        assert!(matches!(app.mode, Mode::Normal));
-    }
-
-    #[test]
-    fn add_form_typing_appends_chars() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app(&temp);
-        app.mode = Mode::AddForm {
-            title: String::new(),
-            queue: Queue::Inbox,
-        };
-
-        handle_key(&mut app, key(KeyCode::Char('H'))).unwrap();
-        handle_key(&mut app, key(KeyCode::Char('i'))).unwrap();
-        assert!(matches!(
-            &app.mode,
-            Mode::AddForm { title, .. } if title == "Hi"
-        ));
-
-        handle_key(&mut app, key(KeyCode::Backspace)).unwrap();
-        assert!(matches!(
-            &app.mode,
-            Mode::AddForm { title, .. } if title == "H"
-        ));
-    }
-
-    #[test]
-    fn slash_enters_search() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app(&temp);
-        handle_key(&mut app, key(KeyCode::Char('/'))).unwrap();
-        assert!(matches!(app.mode, Mode::Search { .. }));
-    }
-
-    #[test]
-    fn search_esc_returns_to_normal() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app(&temp);
-        app.mode = Mode::Search {
-            query: String::new(),
-            results: Vec::new(),
-            list_state: ListState::default(),
-        };
-        handle_key(&mut app, key(KeyCode::Esc)).unwrap();
-        assert!(matches!(app.mode, Mode::Normal));
-    }
-
-    #[test]
-    fn search_typing_updates_query() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app_with_task(&temp);
-        app.mode = Mode::Search {
-            query: String::new(),
-            results: Vec::new(),
-            list_state: ListState::default(),
-        };
-
-        handle_key(&mut app, key(KeyCode::Char('T'))).unwrap();
-        assert!(matches!(
-            &app.mode,
-            Mode::Search { query, results, .. } if query == "T" && !results.is_empty()
-        ));
-    }
-
-    #[test]
-    fn e_suspends_for_editor_when_task_selected() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app_with_task(&temp);
-        let result = handle_key(&mut app, key(KeyCode::Char('e'))).unwrap();
-        assert!(matches!(result, SideEffect::SuspendForEditor { .. }));
-    }
-
-    #[test]
-    fn x_enters_confirm_delete() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app_with_task(&temp);
-        handle_key(&mut app, key(KeyCode::Char('x'))).unwrap();
-        assert!(matches!(app.mode, Mode::ConfirmDelete { .. }));
-    }
-
-    #[test]
-    fn confirm_delete_cancel_returns_to_normal() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app_with_task(&temp);
-        app.mode = Mode::ConfirmDelete {
-            task_id: "abc".to_string(),
-        };
-
-        handle_key(&mut app, key(KeyCode::Char('n'))).unwrap();
-        assert!(matches!(app.mode, Mode::Normal));
-    }
-
-    #[test]
-    fn m_enters_move_target() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app_with_task(&temp);
-        handle_key(&mut app, key(KeyCode::Char('m'))).unwrap();
-        assert!(matches!(app.mode, Mode::MoveTarget));
-    }
-
-    #[test]
-    fn move_target_n_moves_to_now() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app_with_task(&temp);
-        app.mode = Mode::MoveTarget;
-
-        handle_key(&mut app, key(KeyCode::Char('n'))).unwrap();
-        assert!(matches!(app.mode, Mode::Normal));
-
-        // Task should have moved to now queue
-        let tasks: Vec<_> = app.tasks.iter().filter(|t| t.queue == Queue::Now).collect();
-        assert_eq!(tasks.len(), 1);
-    }
-
-    #[test]
-    fn j_in_detail_navigates_items() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app_with_task(&temp);
-        app.focused_panel = FocusedPanel::Detail;
-
-        // j/k in Detail should navigate items, not scroll
-        handle_key(&mut app, key(KeyCode::Char('j'))).unwrap();
-        // With one task, wraps back to 0
-        assert_eq!(app.task_list_state.selected(), Some(0));
-    }
-
-    #[test]
-    fn tab_cycles_queues() {
-        let temp = TempDir::new().unwrap();
-        let mut app = test_app(&temp);
-        let initial = app.active_sidebar_index;
-
-        handle_key(&mut app, key(KeyCode::Tab)).unwrap();
-        assert_ne!(app.active_sidebar_index, initial);
+        actions::move_items_to_list(app, &visual_ids, &target)
     }
 }

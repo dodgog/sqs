@@ -29,8 +29,8 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     widgets::status_bar::render(frame, status_area, app);
 
     // Overlay: add form
-    if let Mode::AddForm { title, queue } = &app.mode {
-        widgets::add_form::render(frame, title, *queue);
+    if let Mode::AddForm { title, list, .. } = &app.mode {
+        widgets::add_form::render(frame, title, list);
     }
 }
 
@@ -53,22 +53,32 @@ fn draw_normal(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
     widgets::sidebar::render(frame, sidebar_area, app, focused == FocusedPanel::Sidebar);
 
     let filter = app.active_filter();
-    let tasks = app.current_queue_tasks();
+    let items = app.current_items();
     let selected_index = app.task_list_state.selected();
-    let selected_task = selected_index.and_then(|i| tasks.get(i).copied()).cloned();
+    let selected_item = selected_index.and_then(|i| items.get(i).copied()).cloned();
+    let all_list_names: Vec<String> = app
+        .sidebar_entries()
+        .iter()
+        .filter_map(|e| match e {
+            crate::tui::app_state::SidebarEntry::List(n) => Some(n.clone()),
+            _ => None,
+        })
+        .collect();
     widgets::task_list::render(
         frame,
         task_list_area,
         filter,
-        &tasks,
+        &items,
         selected_index,
+        app.visual_selection_range(),
+        &all_list_names,
         focused == FocusedPanel::TaskList,
     );
 
     widgets::detail::render(
         frame,
         detail_area,
-        selected_task.as_ref(),
+        selected_item.as_ref(),
         app.detail_scroll,
         focused == FocusedPanel::Detail,
     );
@@ -107,23 +117,24 @@ fn draw_search(frame: &mut Frame, area: Rect, app: &mut TuiApp) {
     // Results list
     let items: Vec<ListItem> = results
         .iter()
-        .filter_map(|(task_id, queue)| {
-            let task = app.tasks.iter().find(|t| t.id == *task_id)?;
+        .filter_map(|(ext_id, list_name)| {
+            let item = app.items.iter().find(|i| i.ext_id == *ext_id)?;
             let line = Line::from(vec![
                 Span::styled(
-                    format!("[{:<5}] ", queue),
+                    format!("[{:<5}] ", list_name),
                     Style::default().fg(Color::Magenta),
                 ),
-                Span::styled(format!("{:<8}", task.id), Style::default().fg(Color::Cyan)),
-                Span::raw(&task.title),
+                Span::styled(
+                    format!("{:<6}", item.ext_id),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw(&item.title),
             ]);
             Some(ListItem::new(line))
         })
         .collect();
 
-    let highlight_style = Style::default()
-        .add_modifier(Modifier::BOLD)
-        .bg(Color::DarkGray);
+    let highlight_style = Style::default().bg(Color::DarkGray);
 
     let list = List::new(items)
         .highlight_style(highlight_style)

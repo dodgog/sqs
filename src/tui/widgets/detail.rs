@@ -1,39 +1,40 @@
 use ratatui::{
     Frame,
     layout::Rect,
+    style::{Color, Style},
     text::Line,
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
 use super::panel_border_style;
-use crate::domain::task::Task;
+use crate::adapter::Item;
 
 pub fn render(
     frame: &mut Frame,
     area: Rect,
-    task: Option<&Task>,
+    item: Option<&Item>,
     scroll_offset: u16,
     focused: bool,
 ) {
     let border_style = panel_border_style(focused);
 
-    let Some(task) = task else {
+    let Some(item) = item else {
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Task detail ")
+            .title(" Detail ")
             .border_style(border_style);
-        let empty = Paragraph::new("No task selected").block(block);
+        let empty = Paragraph::new("No item selected").block(block);
         frame.render_widget(empty, area);
         return;
     };
 
-    let title = format!(" Task detail: {} ", task.title);
+    let title = format!(" {} ", item.title);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(title)
+        .title(Line::styled(title, Style::default().fg(Color::White)))
         .border_style(border_style);
 
-    let lines: Vec<Line> = task
+    let lines: Vec<Line> = item
         .body
         .lines()
         .map(|l| Line::from(l.to_string()))

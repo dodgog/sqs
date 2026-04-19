@@ -2,53 +2,51 @@ pub mod frontmatter;
 pub mod identity;
 pub mod io;
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use chrono::Utc;
 
 use crate::adapter::{Adapter, EditOutcome, Item, ListDef};
 use crate::app::app_error::AppError;
-use crate::domain::id::validate_user_id;
-use crate::domain::task::{Queue, Task};
-use crate::storage::config::ResolvedConfig;
-use crate::storage::id_state::SharedIdAllocator;
-use crate::storage::repo::TaskRepo;
+
+use frontmatter::{ItemFrontmatter, item_from_frontmatter, parse_item_file};
 
 pub struct MarkdownTodolistsAdapter {
-    repo: TaskRepo,
-    config: ResolvedConfig,
+    root: PathBuf,
 }
 
 impl MarkdownTodolistsAdapter {
-    pub fn new(config: ResolvedConfig) -> Self {
-        let repo = TaskRepo::new(config.tasks_root.clone(), config.queue_dirs.clone());
-        Self { repo, config }
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
     }
 
-    pub fn config(&self) -> &ResolvedConfig {
-        &self.config
+    fn item_path(&self, ext_id: &str) -> PathBuf {
+        self.root.join(format!("{ext_id}.md"))
     }
 
-    fn list_name_to_queue(name: &str) -> Result<Queue, AppError> {
-        Queue::from_str(name).map_err(|_| {
-            AppError::usage(format!(
-                "invalid list '{}'; expected one of: inbox, now, next, later, done",
-                name
-            ))
-        })
+    fn read_item(&self, ext_id: &str) -> Result<(ItemFrontmatter, String), AppError> {
+        let path = self.item_path(ext_id);
+        let content = fs::read_to_string(&path).map_err(|_| AppError::not_found(ext_id))?;
+        parse_item_file(&content)
     }
 
-    fn task_to_item(task: &Task) -> Item {
-        Item {
-            ext_id: task.id.clone(),
-            title: task.title.clone(),
-            body: task.body.clone(),
-            list: task.queue.to_string(),
-            order: task.updated_at.timestamp() as f64,
-            content_hash: 0,
-        }
+    fn write_item_fm(
+        &self,
+        ext_id: &str,
+        fm: &ItemFrontmatter,
+        body: &str,
+    ) -> Result<PathBuf, AppError> {
+        io::write_item_file(&self.root, ext_id, fm, body)
+    }
+
+    fn existing_ids(&self) -> HashSet<String> {
+        self.scan()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|i| i.ext_id)
+            .collect()
     }
 }
 
@@ -58,43 +56,20 @@ impl Adapter for MarkdownTodolistsAdapter {
     }
 
     fn lists(&self) -> Vec<ListDef> {
-        vec![
-            ListDef {
-                name: "inbox".into(),
-                display: "Inbox".into(),
-                order: 0.0,
-            },
-            ListDef {
-                name: "now".into(),
-                display: "Now".into(),
-                order: 1.0,
-            },
-            ListDef {
-                name: "next".into(),
-                display: "Next".into(),
-                order: 2.0,
-            },
-            ListDef {
-                name: "later".into(),
-                display: "Later".into(),
-                order: 3.0,
-            },
-            ListDef {
-                name: "done".into(),
-                display: "Done".into(),
-                order: 4.0,
-            },
-        ]
+        io::read_lists_yaml(&self.root).unwrap_or_else(|_| io::default_lists())
+    }
+
+    fn set_lists(&mut self, lists: &[ListDef]) -> Result<(), AppError> {
+        io::write_lists_yaml(&self.root, lists)
     }
 
     fn scan(&self) -> Result<Vec<Item>, AppError> {
-        let stored = self.repo.scan_all()?;
-        Ok(stored.iter().map(|s| Self::task_to_item(&s.task)).collect())
+        io::scan_dir(&self.root)
     }
 
     fn find_item(&self, ext_id: &str) -> Result<Item, AppError> {
-        let stored = self.repo.find_by_id(ext_id)?;
-        Ok(Self::task_to_item(&stored.task))
+        let (fm, body) = self.read_item(ext_id)?;
+        Ok(item_from_frontmatter(ext_id, &fm, &body))
     }
 
     fn create_item(
@@ -103,45 +78,63 @@ impl Adapter for MarkdownTodolistsAdapter {
         list: &str,
         title: &str,
         body: &str,
+        order: f64,
     ) -> Result<(Item, PathBuf), AppError> {
-        let queue = Self::list_name_to_queue(list)?;
-        let now = Utc::now();
-
-        let task_id = match id {
+        let ext_id = match id {
             Some(id) => {
-                validate_user_id(id)?;
-                if self.repo.id_exists(id) {
-                    return Err(AppError::usage(format!("id '{}' already exists", id)));
+                if self.item_path(id).exists() {
+                    return Err(AppError::usage(format!("id '{id}' already exists")));
                 }
                 id.to_string()
             }
-            None => SharedIdAllocator::new(&self.config).generate(&self.repo)?,
+            None => identity::generate_id(&self.existing_ids()),
         };
 
-        let mut task = Task::new(task_id, title, now);
-        if !body.is_empty() {
-            task.body = format!("# {}\n\n{}\n", title, body);
-        }
-        task.move_to(queue, now);
+        let now = Utc::now();
+        let fm = ItemFrontmatter {
+            title: title.to_string(),
+            list: list.to_string(),
+            order,
+            created_at: now,
+            updated_at: now,
+        };
 
-        let path = self.repo.create(&task)?;
-        Ok((Self::task_to_item(&task), path))
+        let path = self.write_item_fm(&ext_id, &fm, body)?;
+        let item = item_from_frontmatter(&ext_id, &fm, body);
+        Ok((item, path))
     }
 
     fn move_item(&mut self, ext_id: &str, target_list: &str) -> Result<Item, AppError> {
-        let queue = Self::list_name_to_queue(target_list)?;
-        let (task, _, _) = self.repo.move_to_queue(ext_id, queue, Utc::now())?;
-        Ok(Self::task_to_item(&task))
+        let (mut fm, body) = self.read_item(ext_id)?;
+        fm.list = target_list.to_string();
+        fm.updated_at = Utc::now();
+        self.write_item_fm(ext_id, &fm, &body)?;
+        Ok(item_from_frontmatter(ext_id, &fm, &body))
+    }
+
+    fn reorder_items(&mut self, _list: &str, ordered_ids: &[String]) -> Result<(), AppError> {
+        for (i, id) in ordered_ids.iter().enumerate() {
+            let (mut fm, body) = self.read_item(id)?;
+            fm.order = i as f64;
+            self.write_item_fm(id, &fm, &body)?;
+        }
+        Ok(())
     }
 
     fn delete_item(&mut self, ext_id: &str) -> Result<(), AppError> {
-        self.repo.delete(ext_id)?;
+        let path = self.item_path(ext_id);
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
         Ok(())
     }
 
     fn editor_path(&self, ext_id: &str) -> Result<PathBuf, AppError> {
-        let stored = self.repo.find_by_id(ext_id)?;
-        Ok(stored.path)
+        let path = self.item_path(ext_id);
+        if !path.exists() {
+            return Err(AppError::not_found(ext_id));
+        }
+        Ok(path)
     }
 
     fn apply_edit(
@@ -154,17 +147,25 @@ impl Adapter for MarkdownTodolistsAdapter {
 
         if edited_content.trim().is_empty() {
             fs::write(path, original_content)?;
-            return Err(AppError::message("task file cannot be empty"));
+            return Err(AppError::message("file cannot be empty"));
         }
 
         if edited_content == original_content {
             return Ok(EditOutcome::Unchanged);
         }
 
-        fs::write(path, original_content)?;
-        self.repo
-            .replace_edited(ext_id, &edited_content, Utc::now())?;
-        Ok(EditOutcome::Applied)
+        // Validate the edited frontmatter
+        match parse_item_file(&edited_content) {
+            Ok((mut fm, body)) => {
+                fm.updated_at = Utc::now();
+                self.write_item_fm(ext_id, &fm, &body)?;
+                Ok(EditOutcome::Applied)
+            }
+            Err(e) => {
+                fs::write(path, original_content)?;
+                Err(AppError::message(format!("invalid file: {e}")))
+            }
+        }
     }
 
     fn finalize_add_edit(
@@ -177,16 +178,20 @@ impl Adapter for MarkdownTodolistsAdapter {
 
         if edited_content.trim().is_empty() {
             fs::write(path, original_content)?;
-            return Err(AppError::message("task file cannot be empty"));
+            return Err(AppError::message("file cannot be empty"));
         }
 
-        if edited_content != original_content
-            && let Err(error) =
-                self.repo
-                    .finalize_added_edit(ext_id, path, &edited_content, Utc::now())
-        {
-            fs::write(path, original_content)?;
-            return Err(error);
+        if edited_content != original_content {
+            match parse_item_file(&edited_content) {
+                Ok((mut fm, body)) => {
+                    fm.updated_at = Utc::now();
+                    self.write_item_fm(ext_id, &fm, &body)?;
+                }
+                Err(e) => {
+                    fs::write(path, original_content)?;
+                    return Err(AppError::message(format!("invalid file: {e}")));
+                }
+            }
         }
 
         Ok(())

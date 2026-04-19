@@ -10,6 +10,6 @@ pub fn panel_border_style(focused: bool) -> Style {
     if focused {
         Style::default().fg(Color::Cyan)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::Indexed(245))
     }
 }
