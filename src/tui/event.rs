@@ -207,11 +207,13 @@ fn handle_visual_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
         KeyCode::Esc | KeyCode::Char('v') => {
             app.mode = Mode::Normal;
         }
-        // Keep visual mode when switching panes
+        // Exit visual mode and switch pane
         KeyCode::Char('h') | KeyCode::Left => {
+            app.mode = Mode::Normal;
             app.focused_panel = app.focused_panel.left();
         }
         KeyCode::Char('l') | KeyCode::Right => {
+            app.mode = Mode::Normal;
             app.focused_panel = app.focused_panel.right();
         }
         KeyCode::Char('j') | KeyCode::Down => {
