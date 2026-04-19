@@ -1,3 +1,3 @@
 fn main() {
-    std::process::exit(tqs::run());
+    std::process::exit(sqs::run());
 }

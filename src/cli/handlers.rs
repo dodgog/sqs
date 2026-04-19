@@ -4,31 +4,33 @@ use crate::storage::config;
 
 use super::args::{Cli, Command};
 use super::commands::{
-    add, config as config_cmd, delete, doctor, done, edit, find, helpers, inbox, list, move_cmd,
-    now, show, start, triage,
+    add, config as config_cmd, delete, doctor, edit, find, helpers, init, list, move_cmd, show,
 };
 
 pub fn handle(cli: Cli) -> Result<(), AppError> {
     match cli.command {
         Some(Command::Add(command)) => add::handle_add(command, cli.root),
+        Some(Command::Init(command)) => init::handle_init(command, cli.root),
         Some(Command::List(command)) => list::handle_list(command, cli.root),
-        Some(Command::Now(command)) => now::handle_now(command, cli.root),
-        Some(Command::Inbox(command)) => inbox::handle_inbox(command, cli.root),
         Some(Command::Move(command)) => move_cmd::handle_move(command, cli.root),
-        Some(Command::Start(command)) => start::handle_start(command, cli.root),
         Some(Command::Delete(command)) => delete::handle_delete(command, cli.root),
-        Some(Command::Done(command)) => done::handle_done(command, cli.root),
         Some(Command::Edit(command)) => edit::handle_edit(command, cli.root),
         Some(Command::Show(command)) => show::handle_show(command, cli.root),
         Some(Command::Find(command)) => find::handle_find(command, cli.root),
-        Some(Command::Triage(command)) => triage::handle_triage(command, cli.root),
         Some(Command::Config(command)) => config_cmd::handle_config(command, cli.root),
         Some(Command::Doctor(command)) => doctor::handle_doctor(command, cli.root),
-        None => handle_default(cli.root, cli.no_tui),
+        Some(Command::Tui) => handle_tui(cli.root),
+        None => handle_default(cli.root),
     }
 }
 
-fn handle_default(root: Option<std::path::PathBuf>, no_tui: bool) -> Result<(), AppError> {
+fn handle_tui(root: Option<std::path::PathBuf>) -> Result<(), AppError> {
+    let resolved = config::resolve(root)?;
+    let repo = helpers::repo_from_config(&resolved);
+    crate::tui::run(resolved, repo)
+}
+
+fn handle_default(root: Option<std::path::PathBuf>) -> Result<(), AppError> {
     let resolved = match config::resolve(root) {
         Ok(resolved) => resolved,
         Err(_) => {
@@ -40,10 +42,7 @@ fn handle_default(root: Option<std::path::PathBuf>, no_tui: bool) -> Result<(), 
 
     let repo = helpers::repo_from_config(&resolved);
 
-    let use_tui = !no_tui && std::io::IsTerminal::is_terminal(&std::io::stdout());
-    if use_tui {
-        crate::tui::run(resolved, repo)?;
-    } else {
+    {
         let tasks = repo.list()?;
         if tasks.is_empty() {
             let inspection = config::inspect(None)?;
@@ -65,10 +64,9 @@ mod tests {
 
     #[test]
     fn handle_shows_getting_started_when_no_command_and_no_config() {
-        let _env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let _env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         handle(Cli {
             root: None,
-            no_tui: true,
             command: None,
         })
         .expect("bare invocation should succeed with getting-started guide");
@@ -76,13 +74,12 @@ mod tests {
 
     #[test]
     fn handle_shows_getting_started_when_no_command_and_no_tasks() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         let temp = TempDir::new().expect("temp dir should exist");
-        env.set("TQS_ROOT", temp.path().as_os_str());
+        env.set("SQS_ROOT", temp.path().as_os_str());
 
         handle(Cli {
             root: None,
-            no_tui: true,
             command: None,
         })
         .expect("bare invocation with empty repo should show dashboard");

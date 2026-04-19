@@ -335,42 +335,42 @@ mod tests {
 
     #[test]
     fn test_expand_command_ad() {
-        let args = vec!["tqs".to_string(), "ad".to_string()];
+        let args = vec!["sqs".to_string(), "ad".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded[1], "add");
     }
 
     #[test]
     fn test_expand_command_l() {
-        let args = vec!["tqs".to_string(), "l".to_string()];
+        let args = vec!["sqs".to_string(), "l".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded[1], "list");
     }
 
     #[test]
     fn test_expand_command_list() {
-        let args = vec!["tqs".to_string(), "lst".to_string()];
+        let args = vec!["sqs".to_string(), "lst".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded[1], "list");
     }
 
     #[test]
-    fn test_expand_command_complete() {
-        let args = vec!["tqs".to_string(), "dn".to_string()];
+    fn test_expand_command_delete() {
+        let args = vec!["sqs".to_string(), "del".to_string()];
         let expanded = expand_command(args);
-        assert_eq!(expanded[1], "done");
+        assert_eq!(expanded[1], "delete");
     }
 
     #[test]
     fn test_expand_command_old_command_is_not_rewritten() {
-        let args = vec!["tqs".to_string(), "create".to_string()];
+        let args = vec!["sqs".to_string(), "create".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded[1], "create");
     }
 
     #[test]
     fn test_expand_command_m() {
-        let args = vec!["tqs".to_string(), "m".to_string()];
+        let args = vec!["sqs".to_string(), "m".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded[1], "move");
     }
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn test_expand_command_with_global_flags_before() {
         let args = vec![
-            "tqs".to_string(),
+            "sqs".to_string(),
             "--root".to_string(),
             "/path".to_string(),
             "l".to_string(),
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn test_expand_command_with_global_flag_equals_value_before() {
         let args = vec![
-            "tqs".to_string(),
+            "sqs".to_string(),
             "--root=/path".to_string(),
             "l".to_string(),
         ];
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn test_expand_command_with_global_flags_after() {
         let args = vec![
-            "tqs".to_string(),
+            "sqs".to_string(),
             "l".to_string(),
             "--root".to_string(),
             "/path".to_string(),
@@ -415,14 +415,14 @@ mod tests {
 
     #[test]
     fn test_expand_command_no_match() {
-        let args = vec!["tqs".to_string(), "xyz".to_string()];
+        let args = vec!["sqs".to_string(), "xyz".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded[1], "xyz");
     }
 
     #[test]
     fn test_expand_command_with_args() {
-        let args = vec!["tqs".to_string(), "l".to_string(), "keyword".to_string()];
+        let args = vec!["sqs".to_string(), "l".to_string(), "keyword".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded[1], "list");
         assert_eq!(expanded[2], "keyword");
@@ -430,28 +430,28 @@ mod tests {
 
     #[test]
     fn test_expand_command_empty_args() {
-        let args = vec!["tqs".to_string()];
+        let args = vec!["sqs".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded.len(), 1);
     }
 
     #[test]
     fn test_expand_command_no_match_first_arg_is_flag() {
-        let args = vec!["tqs".to_string(), "--help".to_string(), "list".to_string()];
+        let args = vec!["sqs".to_string(), "--help".to_string(), "list".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded[1], "--help");
     }
 
     #[test]
     fn test_expand_command_unique_fuzzy_match_still_works_without_aliases() {
-        let args = vec!["tqs".to_string(), "shw".to_string()];
+        let args = vec!["sqs".to_string(), "shw".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded[1], "show");
     }
 
     #[test]
     fn test_expand_command_canonical_preferred_over_alias_fuzzy() {
-        let args = vec!["tqs".to_string(), "a".to_string()];
+        let args = vec!["sqs".to_string(), "a".to_string()];
         let expanded = expand_command(args);
         assert_eq!(expanded[1], "add");
     }

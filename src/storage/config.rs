@@ -91,12 +91,13 @@ impl QueueDirsOverride {
 pub fn resolve(explicit_root: Option<PathBuf>) -> Result<ResolvedConfig, AppError> {
     let file_config = load_file_config()?;
     let tasks_root = explicit_root
-        .or_else(|| env_path("TQS_ROOT"))
+        .or_else(|| env_path("SQS_ROOT"))
         .or_else(|| {
             file_config
                 .as_ref()
                 .and_then(|config| config.tasks_root.clone())
         })
+        .or_else(find_sqs_toml_root)
         .ok_or_else(missing_tasks_root_error)?;
 
     let daily_notes_dir = file_config
@@ -111,7 +112,7 @@ pub fn resolve(explicit_root: Option<PathBuf>) -> Result<ResolvedConfig, AppErro
         .as_ref()
         .and_then(|config| config.obsidian_vault_dir.clone())
         .unwrap_or_else(|| tasks_root.clone())
-        .join(".tqs");
+        .join(".sqs");
 
     Ok(ResolvedConfig {
         obsidian_vault_dir: file_config
@@ -127,10 +128,10 @@ pub fn resolve(explicit_root: Option<PathBuf>) -> Result<ResolvedConfig, AppErro
 pub fn inspect(explicit_root: Option<PathBuf>) -> Result<ConfigInspection, AppError> {
     let config_path = config_path();
     let file_exists = config_path.as_ref().is_some_and(|path| path.exists());
-    let env_root = env_path("TQS_ROOT");
+    let env_root = env_path("SQS_ROOT");
     let resolved = match resolve(explicit_root.clone()) {
         Ok(resolved) => Some(resolved),
-        Err(error) if error.to_string().starts_with("missing tasks_root;") => None,
+        Err(error) if error.to_string().starts_with("no sqs.toml found") => None,
         Err(error) => return Err(error),
     };
 
@@ -147,9 +148,9 @@ pub fn starter_config(config_path: Option<&Path>) -> String {
     let mut message = String::new();
     let config_display = config_path
         .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "~/.config/tqs/config.toml".to_string());
+        .unwrap_or_else(|| "~/.config/sqs/config.toml".to_string());
     message.push_str("To get started:\n");
-    message.push_str("  1. Try a one-off root: tqs --root ~/tasks add \"My first task\"\n");
+    message.push_str("  1. Try a one-off root: sqs --root ~/tasks add \"My first task\"\n");
     message.push_str(&format!("  2. Or create {config_display} with:\n"));
     message.push_str("     tasks_root = \"~/tasks\"\n");
     message.push_str("     # Optional for Obsidian users:\n");
@@ -162,10 +163,10 @@ fn missing_tasks_root_error() -> AppError {
     let location = config_path
         .as_ref()
         .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "~/.config/tqs/config.toml".to_string());
+        .unwrap_or_else(|| "~/.config/sqs/config.toml".to_string());
 
     AppError::message(format!(
-        "missing tasks_root; pass --root, set TQS_ROOT, or configure it in {location}\n\n{}",
+        "no sqs.toml found; run `sqs init` or pass --root, set SQS_ROOT, or configure {location}\n\n{}",
         starter_config(config_path.as_deref())
     ))
 }
@@ -262,15 +263,38 @@ fn queue_dir_name(value: Option<&str>, default: &str) -> Result<String, AppError
     }
 }
 
+/// Walk up from CWD looking for sqs.toml; extract tasks_root from adapter config.
+fn find_sqs_toml_root() -> Option<PathBuf> {
+    let mut dir = env::current_dir().ok()?;
+    loop {
+        let candidate = dir.join("sqs.toml");
+        if candidate.is_file() {
+            let content = fs::read_to_string(&candidate).ok()?;
+            let parsed: toml::Value = toml::from_str(&content).ok()?;
+            // Try [adapters.markdown-todolists].root
+            let root_str = parsed
+                .get("adapters")
+                .and_then(|a| a.get("markdown-todolists"))
+                .and_then(|a| a.get("root"))
+                .and_then(|v| v.as_str())?;
+            let base = candidate.parent().unwrap_or(Path::new("."));
+            return Some(absolutize_from(base, PathBuf::from(root_str)));
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 fn config_path() -> Option<PathBuf> {
     if let Some(xdg_config) = env::var_os("XDG_CONFIG_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
     {
-        return Some(xdg_config.join("tqs").join(CONFIG_FILE_NAME));
+        return Some(xdg_config.join("sqs").join(CONFIG_FILE_NAME));
     }
 
-    env_path("HOME").map(|home| home.join(".config").join("tqs").join(CONFIG_FILE_NAME))
+    env_path("HOME").map(|home| home.join(".config").join("sqs").join(CONFIG_FILE_NAME))
 }
 
 fn env_path(name: &str) -> Option<PathBuf> {
@@ -301,10 +325,10 @@ mod tests {
 
     #[test]
     fn resolve_uses_cli_root_before_env_and_config() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         let temp = TempDir::new().expect("temp dir should exist");
         let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("tqs");
+        let config_dir = config_home.join("sqs");
         fs::create_dir_all(&config_dir).expect("config dir should exist");
         fs::write(
             config_dir.join("config.toml"),
@@ -312,32 +336,32 @@ mod tests {
         )
         .expect("config file should exist");
         env.set("XDG_CONFIG_HOME", config_home.as_os_str());
-        env.set("TQS_ROOT", "/env/tasks");
+        env.set("SQS_ROOT", "/env/tasks");
 
         let resolved = resolve(Some(PathBuf::from("/cli/tasks"))).expect("config should resolve");
         assert_eq!(resolved.tasks_root, PathBuf::from("/cli/tasks"));
-        assert_eq!(resolved.state_dir, PathBuf::from("/cli/tasks").join(".tqs"));
+        assert_eq!(resolved.state_dir, PathBuf::from("/cli/tasks").join(".sqs"));
     }
 
     #[test]
     fn resolve_reads_paths_from_config_file() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         let temp = TempDir::new().expect("temp dir should exist");
         let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("tqs");
+        let config_dir = config_home.join("sqs");
         fs::create_dir_all(&config_dir).expect("config dir should exist");
         fs::write(
             config_dir.join("config.toml"),
             "tasks_root = 'tasks'\ndaily_notes_dir = 'daily'\n[queues]\nnow = 'focus'\ndone = 'archive'\n",
         )
         .expect("config file should exist");
-        env.remove("TQS_ROOT");
+        env.remove("SQS_ROOT");
         env.set("XDG_CONFIG_HOME", config_home.as_os_str());
 
         let resolved = resolve(None).expect("config should resolve");
         assert_eq!(resolved.obsidian_vault_dir, None);
         assert_eq!(resolved.tasks_root, config_dir.join("tasks"));
-        assert_eq!(resolved.state_dir, config_dir.join("tasks").join(".tqs"));
+        assert_eq!(resolved.state_dir, config_dir.join("tasks").join(".sqs"));
         assert_eq!(resolved.daily_notes_dir, Some(config_dir.join("daily")));
         assert_eq!(
             resolved
@@ -355,7 +379,7 @@ mod tests {
 
     #[test]
     fn inspect_reports_missing_config_file_and_root_sources() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         let temp = TempDir::new().expect("temp dir should exist");
         let config_home = temp.path().join("config-home");
         env.set("XDG_CONFIG_HOME", config_home.as_os_str());
@@ -364,7 +388,7 @@ mod tests {
 
         assert_eq!(
             inspection.config_path,
-            Some(config_home.join("tqs").join("config.toml"))
+            Some(config_home.join("sqs").join("config.toml"))
         );
         assert!(!inspection.file_exists);
         assert!(inspection.resolved.is_none());
@@ -372,7 +396,7 @@ mod tests {
 
     #[test]
     fn missing_tasks_root_error_includes_starter_config() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         let temp = TempDir::new().expect("temp dir should exist");
         let config_home = temp.path().join("config-home");
         env.set("XDG_CONFIG_HOME", config_home.as_os_str());
@@ -380,13 +404,13 @@ mod tests {
         let error = resolve(None).expect_err("missing root should fail");
         let message = error.to_string();
 
-        assert!(message.contains("missing tasks_root"));
+        assert!(message.contains("no sqs.toml found"));
         assert!(message.contains("To get started:"));
-        assert!(message.contains("tqs --root ~/tasks add \"My first task\""));
+        assert!(message.contains("sqs --root ~/tasks add \"My first task\""));
         assert!(
             message.contains(
                 &config_home
-                    .join("tqs")
+                    .join("sqs")
                     .join("config.toml")
                     .display()
                     .to_string()
@@ -396,17 +420,13 @@ mod tests {
 
     #[test]
     fn resolve_errors_when_tasks_root_is_missing() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         let temp = TempDir::new().expect("temp dir should exist");
-        env.remove("TQS_ROOT");
+        env.remove("SQS_ROOT");
         env.set("XDG_CONFIG_HOME", temp.path().as_os_str());
 
         let error = resolve(None).expect_err("missing config should error");
-        assert!(
-            error
-                .to_string()
-                .contains("missing tasks_root; pass --root, set TQS_ROOT")
-        );
+        assert!(error.to_string().contains("no sqs.toml found"));
     }
 
     #[test]
@@ -429,23 +449,23 @@ mod tests {
 
     #[test]
     fn resolve_derives_paths_from_obsidian_vault_dir() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         let temp = TempDir::new().expect("temp dir should exist");
         let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("tqs");
+        let config_dir = config_home.join("sqs");
         fs::create_dir_all(&config_dir).expect("config dir should exist");
         fs::write(
             config_dir.join("config.toml"),
             "obsidian_vault_dir = 'vault'\n",
         )
         .expect("config file should exist");
-        env.remove("TQS_ROOT");
+        env.remove("SQS_ROOT");
         env.set("XDG_CONFIG_HOME", config_home.as_os_str());
 
         let resolved = resolve(None).expect("config should resolve");
         assert_eq!(resolved.obsidian_vault_dir, Some(config_dir.join("vault")));
         assert_eq!(resolved.tasks_root, config_dir.join("vault").join("Tasks"));
-        assert_eq!(resolved.state_dir, config_dir.join("vault").join(".tqs"));
+        assert_eq!(resolved.state_dir, config_dir.join("vault").join(".sqs"));
         assert_eq!(
             resolved.daily_notes_dir,
             Some(config_dir.join("vault").join("Daily Notes"))
@@ -454,17 +474,17 @@ mod tests {
 
     #[test]
     fn resolve_rejects_mixing_obsidian_vault_dir_with_tasks_root() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         let temp = TempDir::new().expect("temp dir should exist");
         let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("tqs");
+        let config_dir = config_home.join("sqs");
         fs::create_dir_all(&config_dir).expect("config dir should exist");
         fs::write(
             config_dir.join("config.toml"),
             "obsidian_vault_dir = 'vault'\ntasks_root = 'tasks'\n",
         )
         .expect("config file should exist");
-        env.remove("TQS_ROOT");
+        env.remove("SQS_ROOT");
         env.set("XDG_CONFIG_HOME", config_home.as_os_str());
 
         let error = resolve(None).expect_err("config should be rejected");
@@ -477,17 +497,17 @@ mod tests {
 
     #[test]
     fn resolve_rejects_mixing_obsidian_vault_dir_with_daily_notes_dir() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         let temp = TempDir::new().expect("temp dir should exist");
         let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("tqs");
+        let config_dir = config_home.join("sqs");
         fs::create_dir_all(&config_dir).expect("config dir should exist");
         fs::write(
             config_dir.join("config.toml"),
             "obsidian_vault_dir = 'vault'\ndaily_notes_dir = 'daily'\n",
         )
         .expect("config file should exist");
-        env.remove("TQS_ROOT");
+        env.remove("SQS_ROOT");
         env.set("XDG_CONFIG_HOME", config_home.as_os_str());
 
         let error = resolve(None).expect_err("config should be rejected");
@@ -500,17 +520,17 @@ mod tests {
 
     #[test]
     fn resolve_rejects_mixing_obsidian_vault_dir_with_queue_overrides() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
         let temp = TempDir::new().expect("temp dir should exist");
         let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("tqs");
+        let config_dir = config_home.join("sqs");
         fs::create_dir_all(&config_dir).expect("config dir should exist");
         fs::write(
             config_dir.join("config.toml"),
             "obsidian_vault_dir = 'vault'\n[queues]\ninbox = 'capture'\n",
         )
         .expect("config file should exist");
-        env.remove("TQS_ROOT");
+        env.remove("SQS_ROOT");
         env.set("XDG_CONFIG_HOME", config_home.as_os_str());
 
         let error = resolve(None).expect_err("config should be rejected");
@@ -523,15 +543,15 @@ mod tests {
 
     #[test]
     fn resolve_expands_tilde_in_tasks_root() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "TQS_ROOT", "HOME"]);
+        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT", "HOME"]);
         let temp = TempDir::new().expect("temp dir should exist");
         let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("tqs");
+        let config_dir = config_home.join("sqs");
         let fake_home = temp.path().join("fake-home");
         fs::create_dir_all(&config_dir).expect("config dir should exist");
         fs::write(config_dir.join("config.toml"), "tasks_root = '~/o/tasks'\n")
             .expect("config file should exist");
-        env.remove("TQS_ROOT");
+        env.remove("SQS_ROOT");
         env.set("XDG_CONFIG_HOME", config_home.as_os_str());
         env.set("HOME", fake_home.as_os_str());
 

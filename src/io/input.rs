@@ -7,7 +7,7 @@ fn has_tty() -> bool {
 }
 
 fn is_test_mode() -> bool {
-    std::env::var("TQS_TEST_MODE").is_ok()
+    std::env::var("SQS_TEST_MODE").is_ok()
 }
 
 pub fn supports_interaction() -> bool {

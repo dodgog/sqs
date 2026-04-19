@@ -90,10 +90,72 @@ impl FocusedPanel {
     }
 }
 
-pub use crate::app::operations::TriageSummary;
+#[derive(Debug, Default)]
+pub struct TriageSummary {
+    pub moved_now: u32,
+    pub moved_next: u32,
+    pub moved_later: u32,
+    pub moved_done: u32,
+    pub deleted: u32,
+    pub skipped: u32,
+}
+
+impl TriageSummary {
+    pub fn record_move(&mut self, queue: Queue) {
+        match queue {
+            Queue::Now => self.moved_now += 1,
+            Queue::Next => self.moved_next += 1,
+            Queue::Later => self.moved_later += 1,
+            Queue::Done => self.moved_done += 1,
+            Queue::Inbox => {}
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.moved_now == 0
+            && self.moved_next == 0
+            && self.moved_later == 0
+            && self.moved_done == 0
+            && self.deleted == 0
+            && self.skipped == 0
+    }
+}
+
+impl std::fmt::Display for TriageSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts = Vec::new();
+        if self.moved_now > 0 {
+            parts.push(format!("{} to now", self.moved_now));
+        }
+        if self.moved_next > 0 {
+            parts.push(format!("{} to next", self.moved_next));
+        }
+        if self.moved_later > 0 {
+            parts.push(format!("{} to later", self.moved_later));
+        }
+        if self.moved_done > 0 {
+            parts.push(format!("{} done", self.moved_done));
+        }
+        if self.deleted > 0 {
+            parts.push(format!("{} deleted", self.deleted));
+        }
+        if self.skipped > 0 {
+            parts.push(format!("{} skipped", self.skipped));
+        }
+        if parts.is_empty() {
+            write!(f, "No changes")
+        } else {
+            write!(f, "{}", parts.join(", "))
+        }
+    }
+}
 
 pub enum Mode {
     Normal,
+    Visual {
+        anchor: usize,
+    },
     AddForm {
         title: String,
         queue: Queue,
@@ -296,6 +358,44 @@ impl TuiApp {
         self.detail_scroll = 0;
     }
 
+    pub fn select_first_task_absolute(&mut self) {
+        let count = self.current_queue_tasks().len();
+        if count > 0 {
+            self.task_list_state.select(Some(0));
+            self.detail_scroll = 0;
+        }
+    }
+
+    pub fn select_last_task(&mut self) {
+        let count = self.current_queue_tasks().len();
+        if count > 0 {
+            self.task_list_state.select(Some(count - 1));
+            self.detail_scroll = 0;
+        }
+    }
+
+    pub fn visual_selection_range(&self) -> Option<(usize, usize)> {
+        if let Mode::Visual { anchor } = &self.mode {
+            let cursor = self.task_list_state.selected().unwrap_or(0);
+            let start = (*anchor).min(cursor);
+            let end = (*anchor).max(cursor);
+            Some((start, end))
+        } else {
+            None
+        }
+    }
+
+    pub fn visual_selected_task_ids(&self) -> Vec<String> {
+        if let Some((start, end)) = self.visual_selection_range() {
+            let tasks = self.current_queue_tasks();
+            (start..=end)
+                .filter_map(|i| tasks.get(i).map(|t| t.id.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn update_search_results(&mut self) {
         use crate::domain::filter::matches_query;
         let Mode::Search {
@@ -429,7 +529,7 @@ mod tests {
         let config = ResolvedConfig {
             obsidian_vault_dir: None,
             tasks_root: root.clone(),
-            state_dir: root.join(".tqs"),
+            state_dir: root.join(".sqs"),
             daily_notes_dir: None,
             queue_dirs: QueueDirs::default(),
         };
@@ -442,7 +542,7 @@ mod tests {
         let config = ResolvedConfig {
             obsidian_vault_dir: None,
             tasks_root: root.clone(),
-            state_dir: root.join(".tqs"),
+            state_dir: root.join(".sqs"),
             daily_notes_dir: None,
             queue_dirs: QueueDirs::default(),
         };

@@ -23,6 +23,7 @@ pub fn poll_event(timeout: Duration) -> std::io::Result<Option<Event>> {
 pub fn handle_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppError> {
     match &app.mode {
         Mode::Normal => handle_normal_key(app, key),
+        Mode::Visual { .. } => handle_visual_key(app, key),
         Mode::AddForm { .. } => handle_add_form_key(app, key),
         Mode::ConfirmDelete { .. } => handle_confirm_delete_key(app, key),
         Mode::MoveTarget { .. } => handle_move_target_key(app, key),
@@ -75,10 +76,8 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
         // Task actions
         KeyCode::Char('d') => return actions::mark_done(app),
         KeyCode::Char('s') => return actions::start_task(app),
-        KeyCode::Char('m') => {
-            if app.selected_task().is_some() {
-                app.mode = Mode::MoveTarget { from_triage: false };
-            }
+        KeyCode::Char('m') if app.selected_task().is_some() => {
+            app.mode = Mode::MoveTarget { from_triage: false };
         }
         KeyCode::Char('x') => {
             if let Some(task) = app.selected_task() {
@@ -119,12 +118,52 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
             }
         }
 
+        // Top/bottom navigation
+        KeyCode::Char('g') if app.focused_panel == FocusedPanel::TaskList => {
+            app.select_first_task_absolute();
+        }
+        KeyCode::Char('G') if app.focused_panel == FocusedPanel::TaskList => {
+            app.select_last_task();
+        }
+
+        // Visual mode
+        KeyCode::Char('v') if app.focused_panel == FocusedPanel::TaskList => {
+            let cursor = app.task_list_state.selected().unwrap_or(0);
+            app.mode = Mode::Visual { anchor: cursor };
+        }
+
         // Refresh
         KeyCode::Char('r') => {
             app.refresh()?;
             app.set_status("Refreshed");
         }
 
+        _ => {}
+    }
+    Ok(SideEffect::None)
+}
+
+fn handle_visual_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppError> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('v') => {
+            app.mode = Mode::Normal;
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.select_next_task();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.select_prev_task();
+        }
+        KeyCode::Char('m') if !app.visual_selected_task_ids().is_empty() => {
+            app.mode = Mode::MoveTarget { from_triage: false };
+        }
+        KeyCode::Char('g') => {
+            app.select_first_task_absolute();
+        }
+        KeyCode::Char('G') => {
+            app.select_last_task();
+        }
+        KeyCode::Char('q') => return Ok(SideEffect::Quit),
         _ => {}
     }
     Ok(SideEffect::None)
@@ -298,8 +337,13 @@ fn do_move(app: &mut TuiApp, queue: Queue, from_triage: bool) -> Result<SideEffe
         app.mode = Mode::Triage;
         actions::triage_move(app, queue)
     } else {
+        let visual_ids = app.visual_selected_task_ids();
         app.mode = Mode::Normal;
-        actions::move_to_queue(app, queue)
+        if visual_ids.is_empty() {
+            actions::move_to_queue(app, queue)
+        } else {
+            actions::move_tasks_to_queue(app, &visual_ids, queue)
+        }
     }
 }
 
@@ -321,7 +365,7 @@ mod tests {
         let config = ResolvedConfig {
             obsidian_vault_dir: None,
             tasks_root: root.clone(),
-            state_dir: root.join(".tqs"),
+            state_dir: root.join(".sqs"),
             daily_notes_dir: None,
             queue_dirs: QueueDirs::default(),
         };
@@ -334,7 +378,7 @@ mod tests {
         let config = ResolvedConfig {
             obsidian_vault_dir: None,
             tasks_root: root.clone(),
-            state_dir: root.join(".tqs"),
+            state_dir: root.join(".sqs"),
             daily_notes_dir: None,
             queue_dirs: QueueDirs::default(),
         };

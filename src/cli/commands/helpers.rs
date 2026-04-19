@@ -2,7 +2,7 @@ use std::{path::PathBuf, str::FromStr};
 
 use crate::app::app_error::AppError;
 use crate::domain::{filter::title_matches_query, task::Queue};
-use crate::io::{input, output, picker};
+use crate::io::{input, output};
 use crate::storage::{
     config, config::ResolvedConfig, editor::ResolvedEditor, repo::StoredTask, repo::TaskRepo,
 };
@@ -27,7 +27,7 @@ pub fn repo_from_config(resolved: &ResolvedConfig) -> TaskRepo {
 pub fn parse_queue(value: &str) -> Result<Queue, String> {
     Queue::from_str(value).map_err(|_| {
         format!(
-            "invalid queue '{}'; expected one of: {}",
+            "invalid list '{}'; expected one of: {}",
             value,
             Queue::all()
                 .iter()
@@ -41,7 +41,7 @@ pub fn parse_queue(value: &str) -> Result<Queue, String> {
 pub fn resolve_task_ref(
     query: Option<String>,
     repo: &TaskRepo,
-    prompt: &str,
+    _prompt: &str,
 ) -> Result<Option<StoredTask>, AppError> {
     let tasks = repo.scan_all()?;
     if tasks.is_empty() {
@@ -50,8 +50,8 @@ pub fn resolve_task_ref(
     }
 
     match query {
-        Some(query) => resolve_query_against_tasks(query, tasks, prompt),
-        None => pick_from(tasks, prompt, None),
+        Some(query) => resolve_query_against_tasks(query, tasks),
+        None => Err(AppError::NoTty),
     }
 }
 
@@ -73,7 +73,7 @@ fn pick_queue(current: Queue) -> Result<Option<Queue>, AppError> {
         .collect::<Vec<_>>();
     let labels = options.iter().map(ToString::to_string).collect::<Vec<_>>();
 
-    match input::prompt_select("Select target queue", &labels)? {
+    match input::prompt_select("Select target list", &labels)? {
         Some(index) => Ok(options.get(index).copied()),
         None => {
             output::print_info("Operation cancelled");
@@ -85,7 +85,6 @@ fn pick_queue(current: Queue) -> Result<Option<Queue>, AppError> {
 fn resolve_query_against_tasks(
     query: String,
     tasks: Vec<StoredTask>,
-    prompt: &str,
 ) -> Result<Option<StoredTask>, AppError> {
     if let Some(task) = unique_match(tasks.iter().filter(|stored| stored.task.id == query)) {
         return Ok(Some(task.clone()));
@@ -109,40 +108,11 @@ fn resolve_query_against_tasks(
         return Ok(title_matches.into_iter().next());
     }
 
-    let ambiguous = if !prefix_matches.is_empty() {
-        prefix_matches
-    } else {
-        title_matches
-    };
-
-    if ambiguous.is_empty() {
-        return Err(AppError::not_found(query));
+    if !prefix_matches.is_empty() || !title_matches.is_empty() {
+        return Err(AppError::ambiguous_task_ref(&query));
     }
 
-    pick_from(ambiguous, prompt, Some(&query))
-}
-
-fn pick_from(
-    tasks: Vec<StoredTask>,
-    prompt: &str,
-    ambiguous_query: Option<&str>,
-) -> Result<Option<StoredTask>, AppError> {
-    let selection = picker::pick_task(&tasks, picker::TaskPickerOptions { prompt });
-    let selection = match (selection, ambiguous_query) {
-        (Err(AppError::NoTty), Some(query)) => return Err(AppError::ambiguous_task_ref(query)),
-        (result, _) => result?,
-    };
-
-    match selection {
-        Some(index) => Ok(tasks.get(index).cloned()),
-        None if ambiguous_query.is_some() => Err(AppError::ambiguous_task_ref(
-            ambiguous_query.expect("query should exist"),
-        )),
-        None => {
-            output::print_info("Operation cancelled");
-            Ok(None)
-        }
-    }
+    Err(AppError::not_found(query))
 }
 
 fn unique_match<'a>(mut matches: impl Iterator<Item = &'a StoredTask>) -> Option<&'a StoredTask> {

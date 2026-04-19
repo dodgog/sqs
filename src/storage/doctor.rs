@@ -465,7 +465,7 @@ mod tests {
         ResolvedConfig {
             obsidian_vault_dir: None,
             tasks_root: root.to_path_buf(),
-            state_dir: root.join(".tqs"),
+            state_dir: root.join(".sqs"),
             daily_notes_dir: None,
             queue_dirs: QueueDirs::default(),
         }
@@ -502,7 +502,7 @@ mod tests {
             &ResolvedConfig {
                 obsidian_vault_dir: None,
                 tasks_root: temp.path().to_path_buf(),
-                state_dir: temp.path().join(".tqs"),
+                state_dir: temp.path().join(".sqs"),
                 daily_notes_dir: None,
                 queue_dirs: QueueDirs {
                     inbox: "shared".to_string(),
@@ -601,7 +601,7 @@ mod tests {
             &ResolvedConfig {
                 obsidian_vault_dir: None,
                 tasks_root: temp.path().join("tasks"),
-                state_dir: temp.path().join("tasks").join(".tqs"),
+                state_dir: temp.path().join("tasks").join(".sqs"),
                 daily_notes_dir: Some(daily_notes.clone()),
                 queue_dirs: QueueDirs::default(),
             },
@@ -672,7 +672,7 @@ mod tests {
             &ResolvedConfig {
                 obsidian_vault_dir: None,
                 tasks_root: root.to_path_buf(),
-                state_dir: root.join(".tqs"),
+                state_dir: root.join(".sqs"),
                 daily_notes_dir: None,
                 queue_dirs: QueueDirs {
                     inbox: "shared".to_string(),
@@ -701,7 +701,7 @@ mod tests {
     fn doctor_warns_about_orphaned_state_files() {
         let temp = TempDir::new().expect("temp dir should exist");
         let root = temp.path();
-        let state_dir = root.join(".tqs");
+        let state_dir = root.join(".sqs");
         let id_gen_dir = state_dir.join("id-generator");
         fs::create_dir_all(&id_gen_dir).expect("id-generator dir should exist");
 
@@ -728,7 +728,7 @@ mod tests {
     fn doctor_fix_removes_orphaned_state_files() {
         let temp = TempDir::new().expect("temp dir should exist");
         let root = temp.path();
-        let state_dir = root.join(".tqs");
+        let state_dir = root.join(".sqs");
         let id_gen_dir = state_dir.join("id-generator");
         fs::create_dir_all(&id_gen_dir).expect("id-generator dir should exist");
 
@@ -756,7 +756,7 @@ mod tests {
     fn doctor_ignores_non_toml_files_in_state_dir() {
         let temp = TempDir::new().expect("temp dir should exist");
         let root = temp.path();
-        let state_dir = root.join(".tqs");
+        let state_dir = root.join(".sqs");
         let id_gen_dir = state_dir.join("id-generator");
         fs::create_dir_all(&id_gen_dir).expect("id-generator dir should exist");
 

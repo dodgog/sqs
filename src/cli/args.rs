@@ -2,9 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use super::commands::{
-    Add, Config, Delete, Doctor, Done, Edit, Find, Inbox, List, Move, Now, Show, Start, Triage,
-};
+use super::commands::{Add, Config, Delete, Doctor, Edit, Find, Init, List, Move, Show};
 
 const TOP_LEVEL_HELP: &str = "\
 Task Commands:
@@ -14,18 +12,15 @@ Task Commands:
   show    Show task details
 
 Workflow Commands:
-  now     List tasks in the now queue
-  inbox   List tasks in the inbox queue
-  start   Move a task to the now queue
-  move    Move a task to a different queue
-  done    Mark a task as done
+  move    Move a task to a different list
   delete  Delete a task permanently
   edit    Edit a task
-  triage  Triage inbox tasks interactively
 
 Setup Commands:
+  init    Initialize a new sqs project
   config  Show effective configuration and setup help
   doctor  Check configuration and task storage health
+  tui     Launch interactive TUI dashboard
 
 Help:
   help    Print this message or the help of the given subcommand(s)
@@ -33,19 +28,15 @@ Help:
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "tqs",
+    name = "sqs",
     version,
-    about = "Terminal task queue",
+    about = "Reorder lists from the terminal",
     help_template = "{about-with-newline}\n{usage-heading} {usage}\n\nOptions:\n{options}{after-help}",
     after_help = TOP_LEVEL_HELP
 )]
 pub struct Cli {
     #[arg(long, global = true)]
     pub root: Option<PathBuf>,
-
-    /// Disable the interactive TUI dashboard (show plain text instead)
-    #[arg(long)]
-    pub no_tui: bool,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -54,17 +45,15 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Add(Add),
+    Init(Init),
     List(List),
-    Now(Now),
-    Inbox(Inbox),
     Move(Move),
-    Start(Start),
     Delete(Delete),
-    Done(Done),
     Edit(Edit),
     Show(Show),
     Find(Find),
     Config(Config),
-    Triage(Triage),
     Doctor(Doctor),
+    /// Launch interactive TUI dashboard
+    Tui,
 }

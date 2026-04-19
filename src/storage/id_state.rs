@@ -272,7 +272,7 @@ mod tests {
     fn allocator_persists_state_under_repo_local_directory() {
         let temp = TempDir::new().expect("temp dir should exist");
         let root = temp.path().join("tasks");
-        let state_dir = temp.path().join(".tqs");
+        let state_dir = temp.path().join(".sqs");
         let repo = TaskRepo::new(root.clone(), QueueDirs::default());
         let allocator = SharedIdAllocator::new(&config(&root, &state_dir));
 
@@ -287,7 +287,7 @@ mod tests {
     fn allocator_recovers_from_corrupt_state_file() {
         let temp = TempDir::new().expect("temp dir should exist");
         let root = temp.path().join("tasks");
-        let state_dir = temp.path().join(".tqs");
+        let state_dir = temp.path().join(".sqs");
         let repo = TaskRepo::new(root.clone(), QueueDirs::default());
         let allocator = SharedIdAllocator::new(&config(&root, &state_dir));
         let parent = allocator
@@ -306,7 +306,7 @@ mod tests {
     fn allocator_skips_existing_ids_when_state_is_missing() {
         let temp = TempDir::new().expect("temp dir should exist");
         let root = temp.path().join("tasks");
-        let state_dir = temp.path().join(".tqs");
+        let state_dir = temp.path().join(".sqs");
         let repo = TaskRepo::new(root.clone(), QueueDirs::default());
         repo.create(&task("000", "Existing task"))
             .expect("existing task should be created");
@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn state_path_is_keyed_by_task_root() {
         let temp = TempDir::new().expect("temp dir should exist");
-        let state_dir = temp.path().join(".tqs");
+        let state_dir = temp.path().join(".sqs");
         let first_root = temp.path().join("tasks-a");
         let second_root = temp.path().join("tasks-b");
         let first = SharedIdAllocator::new(&config(&first_root, &state_dir));
@@ -360,7 +360,7 @@ mod tests {
     fn allocator_lock_serializes_concurrent_generation() {
         let temp = TempDir::new().expect("temp dir should exist");
         let root = temp.path().join("tasks");
-        let state_dir = temp.path().join(".tqs");
+        let state_dir = temp.path().join(".sqs");
         let repo = Arc::new(TaskRepo::new(root.clone(), QueueDirs::default()));
         let config = config(&root, &state_dir);
         let first = SharedIdAllocator::new(&config);

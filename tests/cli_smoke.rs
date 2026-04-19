@@ -1,13 +1,12 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_fs::TempDir;
-use chrono::Local;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use std::fs;
 
-fn tqs_cmd() -> assert_cmd::Command {
-    let mut cmd = cargo_bin_cmd!("tqs");
-    cmd.env("XDG_CONFIG_HOME", "/dev/null/tqs-test-config");
+fn sqs_cmd() -> assert_cmd::Command {
+    let mut cmd = cargo_bin_cmd!("sqs");
+    cmd.env("XDG_CONFIG_HOME", "/dev/null/sqs-test-config");
     cmd
 }
 
@@ -25,8 +24,8 @@ fn write_task(root: &std::path::Path, queue: &str, id: &str, title: &str, body: 
 
 #[test]
 fn help_command_works() {
-    tqs_cmd().arg("--help").assert().success().stdout(
-        contains("Terminal task queue")
+    sqs_cmd().arg("--help").assert().success().stdout(
+        contains("Reorder lists from the terminal")
             .and(contains("Task Commands:"))
             .and(contains("Workflow Commands:"))
             .and(contains("Setup Commands:"))
@@ -39,10 +38,10 @@ fn help_command_works() {
 
 #[test]
 fn bare_command_shows_getting_started_without_config() {
-    tqs_cmd().assert().success().stdout(
-        contains("Welcome to tqs!")
+    sqs_cmd().assert().success().stdout(
+        contains("Welcome to sqs!")
             .and(contains("To get started:"))
-            .and(contains("tqs config")),
+            .and(contains("sqs config")),
     );
 }
 
@@ -52,7 +51,7 @@ fn bare_command_shows_dashboard_when_tasks_exist() {
     write_task(temp.path(), "now", "task-1", "Ship v2", "# Ship v2");
     write_task(temp.path(), "inbox", "task-2", "Review PR", "# Review PR");
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .assert()
@@ -64,17 +63,17 @@ fn bare_command_shows_dashboard_when_tasks_exist() {
 fn bare_command_shows_getting_started_when_no_tasks() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .assert()
         .success()
-        .stdout(contains("Welcome to tqs!").and(contains("To get started:")));
+        .stdout(contains("Welcome to sqs!").and(contains("To get started:")));
 }
 
 #[test]
 fn global_flag_is_rejected() {
-    tqs_cmd()
+    sqs_cmd()
         .arg("--global")
         .arg("list")
         .assert()
@@ -86,7 +85,7 @@ fn global_flag_is_rejected() {
 fn add_creates_task_in_inbox() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("add")
@@ -110,7 +109,7 @@ fn add_creates_task_in_inbox() {
 fn add_generates_short_crockford_ids_and_persists_allocator_state() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    let assert = tqs_cmd()
+    let assert = sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("add")
@@ -140,7 +139,7 @@ fn list_without_queue_shows_dashboard() {
     write_task(temp.path(), "now", "task-1", "Do now", "# Do now");
     write_task(temp.path(), "inbox", "task-2", "Review PR", "# Review PR");
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("list")
@@ -159,7 +158,7 @@ fn list_queue_shows_only_requested_queue() {
     write_task(temp.path(), "now", "task-1", "Do now", "# Do now");
     write_task(temp.path(), "inbox", "task-2", "Review PR", "# Review PR");
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("list")
@@ -174,48 +173,10 @@ fn list_queue_shows_only_requested_queue() {
 }
 
 #[test]
-fn now_command_shows_only_now_queue() {
-    let temp = TempDir::new().expect("temp dir should exist");
-    write_task(temp.path(), "now", "task-1", "Do now", "# Do now");
-    write_task(temp.path(), "inbox", "task-2", "Review PR", "# Review PR");
-
-    tqs_cmd()
-        .arg("--root")
-        .arg(temp.path())
-        .arg("now")
-        .assert()
-        .success()
-        .stdout(
-            contains("now (1)")
-                .and(contains("Do now"))
-                .and(contains("Review PR").not()),
-        );
-}
-
-#[test]
-fn inbox_command_shows_only_inbox_queue() {
-    let temp = TempDir::new().expect("temp dir should exist");
-    write_task(temp.path(), "now", "task-1", "Do now", "# Do now");
-    write_task(temp.path(), "inbox", "task-2", "Review PR", "# Review PR");
-
-    tqs_cmd()
-        .arg("--root")
-        .arg(temp.path())
-        .arg("inbox")
-        .assert()
-        .success()
-        .stdout(
-            contains("inbox (1)")
-                .and(contains("Review PR"))
-                .and(contains("Do now").not()),
-        );
-}
-
-#[test]
 fn move_relocates_file_to_target_queue() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("add")
@@ -226,7 +187,7 @@ fn move_relocates_file_to_target_queue() {
         .assert()
         .success();
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("move")
@@ -244,7 +205,7 @@ fn move_relocates_file_to_target_queue() {
 fn move_promotes_task_from_inbox_to_now() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("add")
@@ -255,7 +216,7 @@ fn move_promotes_task_from_inbox_to_now() {
         .assert()
         .success();
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("move")
@@ -274,7 +235,7 @@ fn move_is_noop_when_task_is_already_in_target_queue() {
     let temp = TempDir::new().expect("temp dir should exist");
     write_task(temp.path(), "now", "task-1", "Do now", "# Do now");
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("move")
@@ -292,7 +253,7 @@ fn move_is_noop_when_task_is_already_in_target_queue() {
 fn move_prompts_for_queue_when_missing() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("add")
@@ -303,8 +264,8 @@ fn move_prompts_for_queue_when_missing() {
         .assert()
         .success();
 
-    tqs_cmd()
-        .env("TQS_TEST_MODE", "1")
+    sqs_cmd()
+        .env("SQS_TEST_MODE", "1")
         .write_stdin("now\n")
         .arg("--root")
         .arg(temp.path())
@@ -319,42 +280,6 @@ fn move_prompts_for_queue_when_missing() {
 }
 
 #[test]
-fn done_is_idempotent() {
-    let temp = TempDir::new().expect("temp dir should exist");
-
-    tqs_cmd()
-        .arg("--root")
-        .arg(temp.path())
-        .arg("add")
-        .arg("--no-edit")
-        .arg("--id")
-        .arg("task-1")
-        .arg("Ship v2")
-        .assert()
-        .success();
-
-    tqs_cmd()
-        .arg("--root")
-        .arg(temp.path())
-        .arg("done")
-        .arg("--no-edit")
-        .arg("task-1")
-        .assert()
-        .success()
-        .stdout(contains("Completed task: task-1"));
-
-    tqs_cmd()
-        .arg("--root")
-        .arg(temp.path())
-        .arg("done")
-        .arg("--no-edit")
-        .arg("task-1")
-        .assert()
-        .success()
-        .stdout(contains("already done"));
-}
-
-#[test]
 fn show_prints_metadata_path_and_body() {
     let temp = TempDir::new().expect("temp dir should exist");
     write_task(
@@ -365,7 +290,7 @@ fn show_prints_metadata_path_and_body() {
         "# Ship v2\n\n## Notes",
     );
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("show")
@@ -386,7 +311,7 @@ fn find_matches_body_text() {
         "# Investigate billing\n\nLook at cost explorer.",
     );
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("find")
@@ -400,7 +325,7 @@ fn find_matches_body_text() {
 fn old_command_names_are_rejected() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("create")
@@ -409,7 +334,7 @@ fn old_command_names_are_rejected() {
         .failure()
         .stderr(contains("unrecognized subcommand"));
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("complete")
@@ -430,7 +355,7 @@ fn show_resolves_unique_title_substring() {
         "# Ship v2 release",
     );
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("show")
@@ -451,7 +376,7 @@ fn show_does_not_resolve_body_text_as_task_reference() {
         "# Ship v2 release\n\nLook at cost explorer.",
     );
 
-    tqs_cmd()
+    sqs_cmd()
         .arg("--root")
         .arg(temp.path())
         .arg("show")
@@ -465,7 +390,7 @@ fn show_does_not_resolve_body_text_as_task_reference() {
 fn add_reads_tasks_root_from_config_file() {
     let temp = TempDir::new().expect("temp dir should exist");
     let config_home = temp.path().join("config-home");
-    let config_dir = config_home.join("tqs");
+    let config_dir = config_home.join("sqs");
     let tasks_root = temp.path().join("configured-tasks");
     std::fs::create_dir_all(&config_dir).expect("config dir should exist");
     std::fs::write(
@@ -474,7 +399,7 @@ fn add_reads_tasks_root_from_config_file() {
     )
     .expect("config file should be written");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("XDG_CONFIG_HOME", &config_home)
         .arg("add")
         .arg("--no-edit")
@@ -492,7 +417,7 @@ fn add_reads_tasks_root_from_config_file() {
 fn add_uses_configured_queue_directory_names() {
     let temp = TempDir::new().expect("temp dir should exist");
     let config_home = temp.path().join("config-home");
-    let config_dir = config_home.join("tqs");
+    let config_dir = config_home.join("sqs");
     let tasks_root = temp.path().join("configured-tasks");
     std::fs::create_dir_all(&config_dir).expect("config dir should exist");
     std::fs::write(
@@ -504,7 +429,7 @@ fn add_uses_configured_queue_directory_names() {
     )
     .expect("config file should be written");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("XDG_CONFIG_HOME", &config_home)
         .arg("add")
         .arg("--no-edit")
@@ -522,16 +447,16 @@ fn add_uses_configured_queue_directory_names() {
 fn command_fails_cleanly_when_tasks_root_is_not_configured() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("XDG_CONFIG_HOME", temp.path())
-        .env_remove("TQS_ROOT")
+        .env_remove("SQS_ROOT")
         .arg("list")
         .assert()
         .failure()
         .stderr(
-            contains("missing tasks_root")
+            contains("no sqs.toml found")
                 .and(contains("To get started:"))
-                .and(contains("tqs --root ~/tasks add \"My first task\"")),
+                .and(contains("sqs --root ~/tasks add \"My first task\"")),
         );
 }
 
@@ -540,16 +465,16 @@ fn config_command_prints_getting_started_guide_when_tasks_root_is_missing() {
     let temp = TempDir::new().expect("temp dir should exist");
     let config_home = temp.path().join("config-home");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("TQS_ROOT")
+        .env_remove("SQS_ROOT")
         .arg("config")
         .assert()
         .success()
         .stdout(
             contains(format!(
                 "config_path = {}",
-                config_home.join("tqs").join("config.toml").display()
+                config_home.join("sqs").join("config.toml").display()
             ))
             .and(contains("config_file = missing"))
             .and(contains("tasks_root = <unset>"))
@@ -563,7 +488,7 @@ fn config_command_prints_effective_values_from_root_override() {
     let temp = TempDir::new().expect("temp dir should exist");
     let config_home = temp.path().join("config-home");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("XDG_CONFIG_HOME", &config_home)
         .arg("--root")
         .arg(temp.path())
@@ -582,7 +507,7 @@ fn config_command_prints_effective_values_from_root_override() {
 fn config_command_prints_configured_daily_notes_and_queue_dirs() {
     let temp = TempDir::new().expect("temp dir should exist");
     let config_home = temp.path().join("config-home");
-    let config_dir = config_home.join("tqs");
+    let config_dir = config_home.join("sqs");
     let tasks_root = temp.path().join("configured-tasks");
     let daily_notes_dir = temp.path().join("daily");
     std::fs::create_dir_all(&config_dir).expect("config dir should exist");
@@ -596,7 +521,7 @@ fn config_command_prints_configured_daily_notes_and_queue_dirs() {
     )
     .expect("config file should be written");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("XDG_CONFIG_HOME", &config_home)
         .arg("config")
         .assert()
@@ -617,7 +542,7 @@ fn config_command_prints_configured_daily_notes_and_queue_dirs() {
 fn config_command_prints_obsidian_vault_alias_and_derived_paths() {
     let temp = TempDir::new().expect("temp dir should exist");
     let config_home = temp.path().join("config-home");
-    let config_dir = config_home.join("tqs");
+    let config_dir = config_home.join("sqs");
     let vault_dir = temp.path().join("vault");
     std::fs::create_dir_all(&config_dir).expect("config dir should exist");
     std::fs::write(
@@ -626,7 +551,7 @@ fn config_command_prints_obsidian_vault_alias_and_derived_paths() {
     )
     .expect("config file should be written");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("XDG_CONFIG_HOME", &config_home)
         .arg("config")
         .assert()
@@ -648,7 +573,7 @@ fn config_command_prints_obsidian_vault_alias_and_derived_paths() {
 fn command_fails_when_obsidian_vault_alias_is_mixed_with_tasks_root() {
     let temp = TempDir::new().expect("temp dir should exist");
     let config_home = temp.path().join("config-home");
-    let config_dir = config_home.join("tqs");
+    let config_dir = config_home.join("sqs");
     std::fs::create_dir_all(&config_dir).expect("config dir should exist");
     std::fs::write(
         config_dir.join("config.toml"),
@@ -656,7 +581,7 @@ fn command_fails_when_obsidian_vault_alias_is_mixed_with_tasks_root() {
     )
     .expect("config file should be written");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("XDG_CONFIG_HOME", &config_home)
         .arg("config")
         .assert()
@@ -670,7 +595,7 @@ fn command_fails_when_obsidian_vault_alias_is_mixed_with_tasks_root() {
 fn config_command_respects_root_precedence() {
     let temp = TempDir::new().expect("temp dir should exist");
     let config_home = temp.path().join("config-home");
-    let config_dir = config_home.join("tqs");
+    let config_dir = config_home.join("sqs");
     let cli_root = temp.path().join("cli-root");
     let env_root = temp.path().join("env-root");
     let config_root = temp.path().join("config-root");
@@ -681,9 +606,9 @@ fn config_command_respects_root_precedence() {
     )
     .expect("config file should be written");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("XDG_CONFIG_HOME", &config_home)
-        .env("TQS_ROOT", &env_root)
+        .env("SQS_ROOT", &env_root)
         .arg("--root")
         .arg(&cli_root)
         .arg("config")
@@ -700,7 +625,7 @@ fn config_command_respects_root_precedence() {
 fn doctor_reports_clean_state_for_empty_root() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("VISUAL", "sh")
         .arg("--root")
         .arg(temp.path())
@@ -727,7 +652,7 @@ fn doctor_fails_when_it_finds_invalid_task_files() {
     )
     .expect("bad task should be written");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("VISUAL", "sh")
         .arg("--root")
         .arg(temp.path())
@@ -747,7 +672,7 @@ fn doctor_fails_when_task_queue_disagrees_with_directory() {
     fs::write(&path, content.replace("queue: inbox", "queue: now"))
         .expect("task should be updated");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("VISUAL", "sh")
         .arg("--root")
         .arg(temp.path())
@@ -762,7 +687,7 @@ fn doctor_fails_when_task_queue_disagrees_with_directory() {
 fn doctor_fails_when_editor_executable_is_missing() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("VISUAL", "definitely-not-a-real-editor-tqs")
         .arg("--root")
         .arg(temp.path())
@@ -779,7 +704,7 @@ fn doctor_fails_when_editor_executable_is_missing() {
 fn doctor_fails_when_editor_command_is_invalid() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("VISUAL", "\"unterminated")
         .arg("--root")
         .arg(temp.path())
@@ -788,107 +713,6 @@ fn doctor_fails_when_editor_command_is_invalid() {
         .failure()
         .stdout(contains("[error] editor: invalid editor command"))
         .stderr(contains("doctor found 1 error(s)"));
-}
-
-#[test]
-fn done_appends_completion_to_daily_note_when_configured() {
-    let temp = TempDir::new().expect("temp dir should exist");
-    let config_home = temp.path().join("config-home");
-    let config_dir = config_home.join("tqs");
-    let tasks_root = temp.path().join("tasks");
-    let daily_notes_dir = temp.path().join("daily");
-    fs::create_dir_all(&config_dir).expect("config dir should exist");
-    fs::write(
-        config_dir.join("config.toml"),
-        format!(
-            "tasks_root = '{}'\ndaily_notes_dir = '{}'\n",
-            tasks_root.display(),
-            daily_notes_dir.display()
-        ),
-    )
-    .expect("config file should be written");
-
-    tqs_cmd()
-        .env("XDG_CONFIG_HOME", &config_home)
-        .arg("add")
-        .arg("--no-edit")
-        .arg("--id")
-        .arg("task-1")
-        .arg("Ship v2")
-        .assert()
-        .success();
-
-    tqs_cmd()
-        .env("XDG_CONFIG_HOME", &config_home)
-        .arg("done")
-        .arg("--no-edit")
-        .arg("task-1")
-        .assert()
-        .success()
-        .stdout(contains("Completed task: task-1"));
-
-    let note_name = format!("{}.md", Local::now().format("%F"));
-    let note = fs::read_to_string(daily_notes_dir.join(note_name)).expect("note should exist");
-    assert!(note.contains("## Completed Tasks"));
-    assert!(note.contains("- [x] [[tasks/done/task-1|Ship v2]]"));
-
-    let task =
-        fs::read_to_string(tasks_root.join("done").join("task-1.md")).expect("task should exist");
-    assert!(task.contains(&format!("daily_note: {}.md", Local::now().format("%F"))));
-}
-
-#[test]
-fn done_with_daily_notes_does_not_duplicate_note_entry() {
-    let temp = TempDir::new().expect("temp dir should exist");
-    let config_home = temp.path().join("config-home");
-    let config_dir = config_home.join("tqs");
-    let tasks_root = temp.path().join("tasks");
-    let daily_notes_dir = temp.path().join("daily");
-    fs::create_dir_all(&config_dir).expect("config dir should exist");
-    fs::write(
-        config_dir.join("config.toml"),
-        format!(
-            "tasks_root = '{}'\ndaily_notes_dir = '{}'\n",
-            tasks_root.display(),
-            daily_notes_dir.display()
-        ),
-    )
-    .expect("config file should be written");
-
-    tqs_cmd()
-        .env("XDG_CONFIG_HOME", &config_home)
-        .arg("add")
-        .arg("--no-edit")
-        .arg("--id")
-        .arg("task-1")
-        .arg("Ship v2")
-        .assert()
-        .success();
-
-    tqs_cmd()
-        .env("XDG_CONFIG_HOME", &config_home)
-        .arg("done")
-        .arg("--no-edit")
-        .arg("task-1")
-        .assert()
-        .success()
-        .stdout(contains("Completed task: task-1"));
-
-    tqs_cmd()
-        .env("XDG_CONFIG_HOME", &config_home)
-        .arg("done")
-        .arg("--no-edit")
-        .arg("task-1")
-        .assert()
-        .success()
-        .stdout(contains("already done"));
-
-    let note_name = format!("{}.md", Local::now().format("%F"));
-    let note = fs::read_to_string(daily_notes_dir.join(note_name)).expect("note should exist");
-    assert_eq!(
-        note.matches("- [x] [[tasks/done/task-1|Ship v2]]").count(),
-        1
-    );
 }
 
 #[test]
@@ -902,7 +726,7 @@ fn edit_updates_body_without_renaming_file() {
         "# Ship v2\n\n## Context\n\n## Notes\n\nOld body",
     );
 
-    tqs_cmd()
+    sqs_cmd()
         .env(
             "VISUAL",
             "sh -c 'cat <<\"EOF\" > \"$1\"\n---\nid: task-1\ntitle: Ship v2\nqueue: inbox\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\ncompleted_at: null\ndaily_note: null\n---\n# Ship v2\n\n## Context\n\n## Notes\n\nUpdated body\nEOF' sh",
@@ -929,7 +753,7 @@ fn edit_with_unchanged_file_preserves_updated_at() {
     fs::create_dir_all(temp.path().join("inbox")).expect("queue dir should exist");
     fs::write(temp.path().join("inbox").join("task-1.md"), original).expect("task should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("VISUAL", "sh -c 'touch \"$1\"' sh")
         .arg("--root")
         .arg(temp.path())
@@ -949,7 +773,7 @@ fn edit_with_unchanged_file_preserves_updated_at() {
 fn add_with_edit_persists_editor_changes() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .env(
             "VISUAL",
             "sh -c 'cat <<\"EOF\" > \"$1\"\n---\nid: task-1\ntitle: Ship v2\nqueue: inbox\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\ncompleted_at: null\ndaily_note: null\n---\n# Ship v2\n\n## Context\n\n## Notes\n\nEdited during add\nEOF' sh",
@@ -974,7 +798,7 @@ fn add_with_edit_persists_editor_changes() {
 fn add_with_edit_rejects_empty_file_and_restores_stub() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .env("VISUAL", "sh -c ': > \"$1\"' sh")
         .arg("--root")
         .arg(temp.path())
@@ -997,7 +821,7 @@ fn add_with_edit_rejects_empty_file_and_restores_stub() {
 fn add_with_edit_rejects_malformed_content_and_restores_stub() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .env(
             "VISUAL",
             "sh -c 'printf -- \"---\\nid: task-1\\n\" > \"$1\"' sh",
@@ -1023,7 +847,7 @@ fn add_with_edit_rejects_malformed_content_and_restores_stub() {
 fn add_with_edit_rejects_id_changes_and_restores_stub() {
     let temp = TempDir::new().expect("temp dir should exist");
 
-    tqs_cmd()
+    sqs_cmd()
         .env(
             "VISUAL",
             "sh -c 'cat <<\"EOF\" > \"$1\"\n---\nid: renamed\ntitle: Ship v2\nqueue: inbox\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\ncompleted_at: null\ndaily_note: null\n---\n# Ship v2\n\n## Context\n\n## Notes\nEOF' sh",

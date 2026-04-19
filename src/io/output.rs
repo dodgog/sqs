@@ -180,12 +180,12 @@ pub fn print_config_inspection(inspection: &ConfigInspection) {
 }
 
 pub fn print_getting_started(config_path: Option<&Path>) {
-    println!("{}", style("Welcome to tqs!").bold());
+    println!("{}", style("Welcome to sqs!").bold());
     println!();
     println!("{}", crate::storage::config::starter_config(config_path));
     println!(
         "Run {} for detailed configuration info.",
-        style("tqs config").cyan()
+        style("sqs config").cyan()
     );
 }
 

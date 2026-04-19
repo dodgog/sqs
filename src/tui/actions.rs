@@ -22,7 +22,7 @@ pub fn mark_done(app: &mut TuiApp) -> Result<SideEffect, AppError> {
         return Ok(SideEffect::None);
     }
     let task_id = task.id.clone();
-    operations::mark_done(&app.repo, &app.config, &task_id)?;
+    operations::mark_done(&app.repo, &task_id)?;
     app.refresh()?;
     app.set_status(format!("Completed: {task_id}"));
     Ok(SideEffect::None)
@@ -44,6 +44,24 @@ pub fn move_to_queue(app: &mut TuiApp, queue: Queue) -> Result<SideEffect, AppEr
     app.repo.move_to_queue(&task_id, queue, Utc::now())?;
     app.refresh()?;
     app.set_status(format!("Moved {task_id} to {queue}"));
+    Ok(SideEffect::None)
+}
+
+pub fn move_tasks_to_queue(
+    app: &mut TuiApp,
+    task_ids: &[String],
+    queue: Queue,
+) -> Result<SideEffect, AppError> {
+    let mut moved = 0;
+    for task_id in task_ids {
+        let task = app.repo.read(task_id)?;
+        if task.queue != queue {
+            app.repo.move_to_queue(task_id, queue, Utc::now())?;
+            moved += 1;
+        }
+    }
+    app.refresh()?;
+    app.set_status(format!("Moved {moved} item(s) to {queue}"));
     Ok(SideEffect::None)
 }
 
@@ -78,7 +96,7 @@ pub fn triage_move(app: &mut TuiApp, queue: Queue) -> Result<SideEffect, AppErro
     let task_id = task.id.clone();
 
     if queue == Queue::Done {
-        operations::mark_done(&app.repo, &app.config, &task_id)?;
+        operations::mark_done(&app.repo, &task_id)?;
         app.triage.summary.record_move(Queue::Done);
     } else {
         app.repo.move_to_queue(&task_id, queue, Utc::now())?;
@@ -141,7 +159,7 @@ mod tests {
         let config = ResolvedConfig {
             obsidian_vault_dir: None,
             tasks_root: root.clone(),
-            state_dir: root.join(".tqs"),
+            state_dir: root.join(".sqs"),
             daily_notes_dir: None,
             queue_dirs: QueueDirs::default(),
         };

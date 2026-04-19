@@ -1,0 +1,15 @@
+- name: inbox
+  display: Inbox
+  order: 0.0
+- name: now
+  display: Now
+  order: 1.0
+- name: next
+  display: Next
+  order: 2.0
+- name: later
+  display: Later
+  order: 3.0
+- name: done
+  display: Done
+  order: 4.0

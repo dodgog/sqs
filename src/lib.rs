@@ -1,4 +1,7 @@
+pub mod adapter;
+pub mod adapters;
 pub mod app;
+pub mod cache;
 pub mod cli;
 pub mod domain;
 pub mod io;

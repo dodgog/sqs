@@ -2,9 +2,9 @@
 
 ## Project
 
-`tqs` is a Rust CLI for managing tasks stored as Markdown files with YAML frontmatter.
+`sqs` is a Rust CLI for reordering named lists from the terminal. Items are stored as Markdown files with YAML frontmatter, organized by a pluggable adapter layer.
 
-Tasks are organized in queues by means of folders. The location of the queues can be customized by a config file. Optionally, a "daily note" markdown file can be configured to be updated as tasks are closed.
+The first adapter (`markdown-todolists`) stores items as `.md` files with `list:` and `order:` frontmatter fields. List definitions live in a `lists.yaml` sidecar. A SQLite cache provides fast metadata lookups.
 
 ## Development Commands
 
@@ -13,7 +13,24 @@ Tasks are organized in queues by means of folders. The location of the queues ca
 - `cargo test` - tests
 - `cargo run -- <command>` - run the CLI locally
 
-This project uses a CLI ticket system for task management. Run `tk help` when you need to use it.
+## Architecture
+
+```
+src/
+  adapter/mod.rs          Adapter trait, Item, ListDef, EditOutcome
+  adapters/
+    markdown_todolists/   First adapter: md files + YAML frontmatter
+      mod.rs              impl Adapter wrapping TaskRepo
+      frontmatter.rs      ItemFrontmatter parsing/rendering
+      io.rs               Flat-directory scanner, lists.yaml read/write
+      identity.rs         Random [a-z]{4}[0-9]{4} ID generator
+  cache/mod.rs            SqliteCache for per-adapter metadata caching
+  cli/                    clap-based CLI commands
+  tui/                    ratatui TUI with vim-style keys
+  app/                    Service entry point, error model, shared operations
+  domain/                 Legacy domain types (Task, Queue, ID generation)
+  storage/                Legacy storage layer (TaskRepo, config, format)
+```
 
 ## Rules
 

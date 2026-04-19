@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project uses SemVer tags (`vX.Y.Z`).
 
+## [Unreleased] - sqs rewrite
+
+### Added
+
+- **Adapter abstraction** — pluggable `Adapter` trait (`Item`, `ListDef`) decouples the CLI/TUI from any specific storage backend. First adapter: `markdown-todolists`.
+- **SQLite cache module** — per-adapter cache for fast metadata lookups (`src/cache/mod.rs`). Schema stores items and list definitions; body is read on-demand from the adapter.
+- **New frontmatter format** — items use `list:` and `order:` fields. Flat-folder storage with `lists.yaml` sidecar for list definitions.
+- **New identity scheme** — random `[a-z]{4}[0-9]{4}` IDs (e.g., `abcd1234`) replace the sequential Crockford base-32 allocator.
+- **`sqs init` command** — scaffolds `sqs.toml`, `tasks/` directory, `lists.yaml`, and `cache/` with `.gitignore` entry.
+- **Vim-style TUI keys** — `g`/`G` for top/bottom, `v` for visual mode with selection extension via `j`/`k`, bulk move via `v` + `m`.
+- **Seed data** — `examples/seed/` with sample items across 5 lists and a `lists.yaml`.
+
+### Changed
+
+- **Renamed `tqs` to `sqs`** — binary, crate, config paths (`~/.config/sqs/`), environment variable (`SQS_ROOT`), state directory (`.sqs`).
+- **"Queue" terminology replaced with "list"** throughout CLI output and error messages.
+- **Simplified `operations` module** — `mark_done` no longer integrates with daily notes.
+
+### Removed
+
+- **CLI commands**: `now`, `inbox`, `start`, `done`, `triage` — use `sqs list <name>` and `sqs move <id> <list>` instead.
+- **Daily notes integration** — Obsidian daily note append-on-completion feature.
+- **Fuzzy task picker** — interactive picker removed; task resolution uses exact/prefix/title matching.
+- **Dependencies**: `fuzzy-matcher`, `libc` removed.
+
 ## [0.3.1] - 2026-04-09
 
 ### Fixed
