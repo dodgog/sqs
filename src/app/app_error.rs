@@ -20,8 +20,6 @@ pub enum AppError {
     Io(#[from] std::io::Error),
     #[error("yaml error: {0}")]
     Yaml(#[from] serde_yaml::Error),
-    #[error("format error: {0}")]
-    Format(#[from] crate::storage::format::FormatError),
     #[error("dialoguer error: {0}")]
     Dialoguer(#[from] dialoguer::Error),
 }
@@ -67,7 +65,6 @@ impl AppError {
             | Self::PathTraversalAttempt(_)
             | Self::Io(_)
             | Self::Yaml(_)
-            | Self::Format(_)
             | Self::Dialoguer(_) => 1,
         }
     }

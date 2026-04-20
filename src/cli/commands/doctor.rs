@@ -2,32 +2,63 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::adapter::Adapter;
+use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
-use crate::io::output;
-use crate::storage::doctor;
+use crate::storage::editor::ResolvedEditor;
 
 #[derive(Debug, Parser)]
-#[command(about = "Check configuration and task storage health")]
-pub struct Doctor {
-    /// Automatically fix problems that can be repaired
-    #[arg(long)]
-    pub fix: bool,
-}
+#[command(about = "Check configuration and storage health")]
+pub struct Doctor;
 
-pub fn handle_doctor(command: Doctor, root: Option<PathBuf>) -> Result<(), AppError> {
+pub fn handle_doctor(_: Doctor, root: Option<PathBuf>) -> Result<(), AppError> {
     let resolved = helpers::resolve_config(root)?;
-    let report = doctor::run(&resolved, command.fix)?;
-    output::print_doctor_report(&report);
+    let mut errors = 0;
+    let mut ok = 0;
 
-    if report.has_errors() {
-        return Err(AppError::message(format!(
-            "doctor found {} error(s) and {} warning(s)",
-            report.error_count(),
-            report.warning_count()
-        )));
+    // Config
+    println!(
+        "[ok] config: resolved tasks_root = {}",
+        resolved.tasks_root.display()
+    );
+    ok += 1;
+
+    // Adapter scan
+    let adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
+    match adapter.scan() {
+        Ok(items) => {
+            println!("[ok] scan: found {} items", items.len());
+            ok += 1;
+        }
+        Err(e) => {
+            println!("[error] scan: {e}");
+            errors += 1;
+        }
     }
 
+    // Lists
+    let lists = adapter.lists();
+    println!("[ok] lists: {} lists defined", lists.len());
+    ok += 1;
+
+    // Editor
+    match ResolvedEditor::resolve() {
+        Ok(editor) => {
+            println!("[ok] editor: resolved to '{}'", editor.program);
+            ok += 1;
+        }
+        Err(e) => {
+            println!("[error] editor: {e}");
+            errors += 1;
+        }
+    }
+
+    println!("summary: {ok} ok, {errors} error(s)");
+
+    if errors > 0 {
+        return Err(AppError::message(format!("doctor found {errors} error(s)")));
+    }
     Ok(())
 }
 
@@ -38,13 +69,6 @@ mod tests {
 
     #[test]
     fn parses_doctor_command() {
-        let cmd = Doctor::parse_from(["doctor"]);
-        assert!(!cmd.fix);
-    }
-
-    #[test]
-    fn parses_doctor_fix_flag() {
-        let cmd = Doctor::parse_from(["doctor", "--fix"]);
-        assert!(cmd.fix);
+        Doctor::parse_from(["doctor"]);
     }
 }

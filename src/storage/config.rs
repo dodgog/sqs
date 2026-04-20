@@ -1,11 +1,11 @@
 use std::{
     env, fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use serde::Deserialize;
 
-use crate::{app::app_error::AppError, domain::task::Queue};
+use crate::app::app_error::AppError;
 
 const CONFIG_FILE_NAME: &str = "config.toml";
 
@@ -20,72 +20,13 @@ pub struct ConfigInspection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedConfig {
-    pub obsidian_vault_dir: Option<PathBuf>,
     pub tasks_root: PathBuf,
     pub state_dir: PathBuf,
-    pub daily_notes_dir: Option<PathBuf>,
-    pub queue_dirs: QueueDirs,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueueDirs {
-    pub(crate) inbox: String,
-    pub(crate) now: String,
-    pub(crate) next: String,
-    pub(crate) later: String,
-    pub(crate) done: String,
-}
-
-impl Default for QueueDirs {
-    fn default() -> Self {
-        Self {
-            inbox: "inbox".to_string(),
-            now: "now".to_string(),
-            next: "next".to_string(),
-            later: "later".to_string(),
-            done: "done".to_string(),
-        }
-    }
-}
-
-impl QueueDirs {
-    pub fn dir_name(&self, queue: Queue) -> &str {
-        match queue {
-            Queue::Inbox => &self.inbox,
-            Queue::Now => &self.now,
-            Queue::Next => &self.next,
-            Queue::Later => &self.later,
-            Queue::Done => &self.done,
-        }
-    }
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct FileConfig {
-    obsidian_vault_dir: Option<PathBuf>,
     tasks_root: Option<PathBuf>,
-    daily_notes_dir: Option<PathBuf>,
-    #[serde(default)]
-    queues: QueueDirsOverride,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct QueueDirsOverride {
-    inbox: Option<String>,
-    now: Option<String>,
-    next: Option<String>,
-    later: Option<String>,
-    done: Option<String>,
-}
-
-impl QueueDirsOverride {
-    fn has_overrides(&self) -> bool {
-        self.inbox.is_some()
-            || self.now.is_some()
-            || self.next.is_some()
-            || self.later.is_some()
-            || self.done.is_some()
-    }
 }
 
 pub fn resolve(explicit_root: Option<PathBuf>) -> Result<ResolvedConfig, AppError> {
@@ -98,30 +39,13 @@ pub fn resolve(explicit_root: Option<PathBuf>) -> Result<ResolvedConfig, AppErro
                 .and_then(|config| config.tasks_root.clone())
         })
         .or_else(find_sqs_toml_root)
-        .ok_or_else(missing_tasks_root_error)?;
+        .ok_or_else(missing_root_error)?;
 
-    let daily_notes_dir = file_config
-        .as_ref()
-        .and_then(|config| config.daily_notes_dir.clone());
-    let queue_dirs = file_config
-        .as_ref()
-        .map(|config| build_queue_dirs(&config.queues))
-        .transpose()?
-        .unwrap_or_default();
-    let state_dir = file_config
-        .as_ref()
-        .and_then(|config| config.obsidian_vault_dir.clone())
-        .unwrap_or_else(|| tasks_root.clone())
-        .join(".sqs");
+    let state_dir = tasks_root.join(".sqs");
 
     Ok(ResolvedConfig {
-        obsidian_vault_dir: file_config
-            .as_ref()
-            .and_then(|config| config.obsidian_vault_dir.clone()),
         tasks_root,
         state_dir,
-        daily_notes_dir,
-        queue_dirs,
     })
 }
 
@@ -145,20 +69,19 @@ pub fn inspect(explicit_root: Option<PathBuf>) -> Result<ConfigInspection, AppEr
 }
 
 pub fn starter_config(config_path: Option<&Path>) -> String {
-    let mut message = String::new();
     let config_display = config_path
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "~/.config/sqs/config.toml".to_string());
+    let mut message = String::new();
     message.push_str("To get started:\n");
-    message.push_str("  1. Try a one-off root: sqs --root ~/tasks add \"My first task\"\n");
-    message.push_str(&format!("  2. Or create {config_display} with:\n"));
+    message.push_str("  1. Run: sqs init\n");
+    message.push_str("  2. Or try: sqs --root ~/tasks add \"My first task\"\n");
+    message.push_str(&format!("  3. Or create {config_display} with:\n"));
     message.push_str("     tasks_root = \"~/tasks\"\n");
-    message.push_str("     # Optional for Obsidian users:\n");
-    message.push_str("     # obsidian_vault_dir = \"~/vault\"\n");
     message
 }
 
-fn missing_tasks_root_error() -> AppError {
+fn missing_root_error() -> AppError {
     let config_path = config_path();
     let location = config_path
         .as_ref()
@@ -186,81 +109,11 @@ fn load_file_config() -> Result<Option<FileConfig>, AppError> {
     })?;
 
     let base_dir = path.parent().unwrap_or(Path::new("."));
-    parsed.obsidian_vault_dir = parsed
-        .obsidian_vault_dir
-        .map(|value| absolutize_from(base_dir, value));
     parsed.tasks_root = parsed
         .tasks_root
         .map(|value| absolutize_from(base_dir, value));
-    parsed.daily_notes_dir = parsed
-        .daily_notes_dir
-        .map(|value| absolutize_from(base_dir, value));
-    apply_obsidian_alias(&mut parsed)?;
 
     Ok(Some(parsed))
-}
-
-fn apply_obsidian_alias(config: &mut FileConfig) -> Result<(), AppError> {
-    let Some(vault_dir) = config.obsidian_vault_dir.as_ref() else {
-        return Ok(());
-    };
-
-    if config.tasks_root.is_some() {
-        return Err(AppError::message(
-            "invalid config: obsidian_vault_dir cannot be combined with tasks_root",
-        ));
-    }
-
-    if config.daily_notes_dir.is_some() {
-        return Err(AppError::message(
-            "invalid config: obsidian_vault_dir cannot be combined with daily_notes_dir",
-        ));
-    }
-
-    if config.queues.has_overrides() {
-        return Err(AppError::message(
-            "invalid config: obsidian_vault_dir cannot be combined with queue directory overrides",
-        ));
-    }
-
-    config.tasks_root = Some(vault_dir.join("Tasks"));
-    config.daily_notes_dir = Some(vault_dir.join("Daily Notes"));
-    Ok(())
-}
-
-fn build_queue_dirs(overrides: &QueueDirsOverride) -> Result<QueueDirs, AppError> {
-    let defaults = QueueDirs::default();
-
-    Ok(QueueDirs {
-        inbox: queue_dir_name(overrides.inbox.as_deref(), &defaults.inbox)?,
-        now: queue_dir_name(overrides.now.as_deref(), &defaults.now)?,
-        next: queue_dir_name(overrides.next.as_deref(), &defaults.next)?,
-        later: queue_dir_name(overrides.later.as_deref(), &defaults.later)?,
-        done: queue_dir_name(overrides.done.as_deref(), &defaults.done)?,
-    })
-}
-
-fn queue_dir_name(value: Option<&str>, default: &str) -> Result<String, AppError> {
-    match value {
-        None => Ok(default.to_string()),
-        Some(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(AppError::message(
-                    "invalid config: queue directory names cannot be empty",
-                ));
-            }
-
-            let path = Path::new(trimmed);
-            let mut components = path.components();
-            match (components.next(), components.next()) {
-                (Some(Component::Normal(_)), None) => Ok(trimmed.to_string()),
-                _ => Err(AppError::message(format!(
-                    "invalid config: queue directory '{trimmed}' must be a single path segment"
-                ))),
-            }
-        }
-    }
 }
 
 /// Walk up from CWD looking for sqs.toml; extract tasks_root from adapter config.
@@ -271,7 +124,6 @@ fn find_sqs_toml_root() -> Option<PathBuf> {
         if candidate.is_file() {
             let content = fs::read_to_string(&candidate).ok()?;
             let parsed: toml::Value = toml::from_str(&content).ok()?;
-            // Try [adapters.markdown-todolists].root
             let root_str = parsed
                 .get("adapters")
                 .and_then(|a| a.get("markdown-todolists"))
@@ -318,244 +170,28 @@ fn absolutize_from(base_dir: &Path, value: PathBuf) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{QueueDirsOverride, build_queue_dirs, inspect, resolve};
+    use super::*;
     use crate::test_support::LockedEnv;
-    use std::{fs, path::PathBuf};
+    use std::fs;
     use tempfile::TempDir;
 
     #[test]
-    fn resolve_uses_cli_root_before_env_and_config() {
+    fn resolve_uses_cli_root() {
         let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
-        let temp = TempDir::new().expect("temp dir should exist");
-        let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("sqs");
-        fs::create_dir_all(&config_dir).expect("config dir should exist");
-        fs::write(
-            config_dir.join("config.toml"),
-            "tasks_root = '/config/tasks'\n",
-        )
-        .expect("config file should exist");
-        env.set("XDG_CONFIG_HOME", config_home.as_os_str());
-        env.set("SQS_ROOT", "/env/tasks");
-
-        let resolved = resolve(Some(PathBuf::from("/cli/tasks"))).expect("config should resolve");
-        assert_eq!(resolved.tasks_root, PathBuf::from("/cli/tasks"));
-        assert_eq!(resolved.state_dir, PathBuf::from("/cli/tasks").join(".sqs"));
-    }
-
-    #[test]
-    fn resolve_reads_paths_from_config_file() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
-        let temp = TempDir::new().expect("temp dir should exist");
-        let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("sqs");
-        fs::create_dir_all(&config_dir).expect("config dir should exist");
-        fs::write(
-            config_dir.join("config.toml"),
-            "tasks_root = 'tasks'\ndaily_notes_dir = 'daily'\n[queues]\nnow = 'focus'\ndone = 'archive'\n",
-        )
-        .expect("config file should exist");
         env.remove("SQS_ROOT");
-        env.set("XDG_CONFIG_HOME", config_home.as_os_str());
-
-        let resolved = resolve(None).expect("config should resolve");
-        assert_eq!(resolved.obsidian_vault_dir, None);
-        assert_eq!(resolved.tasks_root, config_dir.join("tasks"));
-        assert_eq!(resolved.state_dir, config_dir.join("tasks").join(".sqs"));
-        assert_eq!(resolved.daily_notes_dir, Some(config_dir.join("daily")));
-        assert_eq!(
-            resolved
-                .queue_dirs
-                .dir_name(crate::domain::task::Queue::Now),
-            "focus"
-        );
-        assert_eq!(
-            resolved
-                .queue_dirs
-                .dir_name(crate::domain::task::Queue::Done),
-            "archive"
-        );
+        let temp = TempDir::new().expect("temp dir");
+        let resolved = resolve(Some(temp.path().to_path_buf())).expect("config should resolve");
+        assert_eq!(resolved.tasks_root, temp.path());
     }
 
     #[test]
-    fn inspect_reports_missing_config_file_and_root_sources() {
+    fn resolve_errors_without_config() {
         let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
-        let temp = TempDir::new().expect("temp dir should exist");
-        let config_home = temp.path().join("config-home");
-        env.set("XDG_CONFIG_HOME", config_home.as_os_str());
-
-        let inspection = inspect(None).expect("inspection should succeed");
-
-        assert_eq!(
-            inspection.config_path,
-            Some(config_home.join("sqs").join("config.toml"))
-        );
-        assert!(!inspection.file_exists);
-        assert!(inspection.resolved.is_none());
-    }
-
-    #[test]
-    fn missing_tasks_root_error_includes_starter_config() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
-        let temp = TempDir::new().expect("temp dir should exist");
-        let config_home = temp.path().join("config-home");
-        env.set("XDG_CONFIG_HOME", config_home.as_os_str());
-
-        let error = resolve(None).expect_err("missing root should fail");
-        let message = error.to_string();
-
-        assert!(message.contains("no sqs.toml found"));
-        assert!(message.contains("To get started:"));
-        assert!(message.contains("sqs --root ~/tasks add \"My first task\""));
-        assert!(
-            message.contains(
-                &config_home
-                    .join("sqs")
-                    .join("config.toml")
-                    .display()
-                    .to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn resolve_errors_when_tasks_root_is_missing() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
-        let temp = TempDir::new().expect("temp dir should exist");
+        let temp = TempDir::new().expect("temp dir");
         env.remove("SQS_ROOT");
         env.set("XDG_CONFIG_HOME", temp.path().as_os_str());
 
-        let error = resolve(None).expect_err("missing config should error");
+        let error = resolve(None).expect_err("should fail");
         assert!(error.to_string().contains("no sqs.toml found"));
-    }
-
-    #[test]
-    fn queue_directory_overrides_must_be_single_path_segments() {
-        let error = build_queue_dirs(&QueueDirsOverride {
-            inbox: Some("../escape".to_string()),
-            now: None,
-            next: None,
-            later: None,
-            done: None,
-        })
-        .expect_err("invalid queue dir should error");
-
-        assert!(
-            error
-                .to_string()
-                .contains("queue directory '../escape' must be a single path segment")
-        );
-    }
-
-    #[test]
-    fn resolve_derives_paths_from_obsidian_vault_dir() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
-        let temp = TempDir::new().expect("temp dir should exist");
-        let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("sqs");
-        fs::create_dir_all(&config_dir).expect("config dir should exist");
-        fs::write(
-            config_dir.join("config.toml"),
-            "obsidian_vault_dir = 'vault'\n",
-        )
-        .expect("config file should exist");
-        env.remove("SQS_ROOT");
-        env.set("XDG_CONFIG_HOME", config_home.as_os_str());
-
-        let resolved = resolve(None).expect("config should resolve");
-        assert_eq!(resolved.obsidian_vault_dir, Some(config_dir.join("vault")));
-        assert_eq!(resolved.tasks_root, config_dir.join("vault").join("Tasks"));
-        assert_eq!(resolved.state_dir, config_dir.join("vault").join(".sqs"));
-        assert_eq!(
-            resolved.daily_notes_dir,
-            Some(config_dir.join("vault").join("Daily Notes"))
-        );
-    }
-
-    #[test]
-    fn resolve_rejects_mixing_obsidian_vault_dir_with_tasks_root() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
-        let temp = TempDir::new().expect("temp dir should exist");
-        let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("sqs");
-        fs::create_dir_all(&config_dir).expect("config dir should exist");
-        fs::write(
-            config_dir.join("config.toml"),
-            "obsidian_vault_dir = 'vault'\ntasks_root = 'tasks'\n",
-        )
-        .expect("config file should exist");
-        env.remove("SQS_ROOT");
-        env.set("XDG_CONFIG_HOME", config_home.as_os_str());
-
-        let error = resolve(None).expect_err("config should be rejected");
-        assert!(
-            error
-                .to_string()
-                .contains("obsidian_vault_dir cannot be combined with tasks_root")
-        );
-    }
-
-    #[test]
-    fn resolve_rejects_mixing_obsidian_vault_dir_with_daily_notes_dir() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
-        let temp = TempDir::new().expect("temp dir should exist");
-        let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("sqs");
-        fs::create_dir_all(&config_dir).expect("config dir should exist");
-        fs::write(
-            config_dir.join("config.toml"),
-            "obsidian_vault_dir = 'vault'\ndaily_notes_dir = 'daily'\n",
-        )
-        .expect("config file should exist");
-        env.remove("SQS_ROOT");
-        env.set("XDG_CONFIG_HOME", config_home.as_os_str());
-
-        let error = resolve(None).expect_err("config should be rejected");
-        assert!(
-            error
-                .to_string()
-                .contains("obsidian_vault_dir cannot be combined with daily_notes_dir")
-        );
-    }
-
-    #[test]
-    fn resolve_rejects_mixing_obsidian_vault_dir_with_queue_overrides() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT"]);
-        let temp = TempDir::new().expect("temp dir should exist");
-        let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("sqs");
-        fs::create_dir_all(&config_dir).expect("config dir should exist");
-        fs::write(
-            config_dir.join("config.toml"),
-            "obsidian_vault_dir = 'vault'\n[queues]\ninbox = 'capture'\n",
-        )
-        .expect("config file should exist");
-        env.remove("SQS_ROOT");
-        env.set("XDG_CONFIG_HOME", config_home.as_os_str());
-
-        let error = resolve(None).expect_err("config should be rejected");
-        assert!(
-            error
-                .to_string()
-                .contains("obsidian_vault_dir cannot be combined with queue directory overrides")
-        );
-    }
-
-    #[test]
-    fn resolve_expands_tilde_in_tasks_root() {
-        let mut env = LockedEnv::new(&["XDG_CONFIG_HOME", "SQS_ROOT", "HOME"]);
-        let temp = TempDir::new().expect("temp dir should exist");
-        let config_home = temp.path().join("config-home");
-        let config_dir = config_home.join("sqs");
-        let fake_home = temp.path().join("fake-home");
-        fs::create_dir_all(&config_dir).expect("config dir should exist");
-        fs::write(config_dir.join("config.toml"), "tasks_root = '~/o/tasks'\n")
-            .expect("config file should exist");
-        env.remove("SQS_ROOT");
-        env.set("XDG_CONFIG_HOME", config_home.as_os_str());
-        env.set("HOME", fake_home.as_os_str());
-
-        let resolved = resolve(None).expect("config should resolve");
-        assert_eq!(resolved.tasks_root, fake_home.join("o/tasks"));
     }
 }

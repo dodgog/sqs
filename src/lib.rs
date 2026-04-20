@@ -3,7 +3,6 @@ pub mod adapters;
 pub mod app;
 pub mod cache;
 pub mod cli;
-pub mod domain;
 pub mod io;
 pub mod storage;
 #[cfg(test)]
