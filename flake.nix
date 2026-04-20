@@ -9,16 +9,22 @@
     self,
     nixpkgs,
   }: let
-    system = "aarch64-darwin";
-    pkgs = import nixpkgs {inherit system;};
+    forAllSystems = nixpkgs.lib.genAttrs [
+      "aarch64-darwin"
+      "x86_64-linux"
+      "aarch64-linux"
+    ];
+    pkgsFor = system: import nixpkgs {inherit system;};
   in {
-    packages.${system}.default = pkgs.rustPlatform.buildRustPackage {
-      pname = "sqs";
-      version = "0.3.1";
-      src = self;
-      cargoLock.lockFile = ./Cargo.lock;
-    };
+    packages = forAllSystems (system: {
+      default = (pkgsFor system).rustPlatform.buildRustPackage {
+        pname = "sqs";
+        version = "0.3.1";
+        src = self;
+        cargoLock.lockFile = ./Cargo.lock;
+      };
+    });
 
-    defaultPackage.${system} = self.packages.${system}.default;
+    defaultPackage = forAllSystems (system: self.packages.${system}.default);
   };
 }

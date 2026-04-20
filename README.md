@@ -2,6 +2,29 @@
 
 A vim-style terminal tool for reordering items across named lists. Items are Markdown files with YAML frontmatter. Lists are defined in a `lists.yaml` sidecar. Everything lives in a flat folder.
 
+## Install
+
+### From source
+
+```sh
+cargo install --path .
+```
+
+### Nix
+
+```sh
+nix build github:dodgog/sqs
+# or run directly
+nix run github:dodgog/sqs -- tui
+```
+
+### Local build
+
+```sh
+cargo build --release
+cp target/release/sqs ~/.local/bin/sq
+```
+
 ## Quick start
 
 ```sh
