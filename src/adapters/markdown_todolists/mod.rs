@@ -22,12 +22,12 @@ impl MarkdownTodolistsAdapter {
         Self { root }
     }
 
-    fn item_path(&self, ext_id: &str) -> PathBuf {
-        self.root.join(format!("{ext_id}.md"))
+    fn find_path(&self, ext_id: &str) -> Result<PathBuf, AppError> {
+        io::find_item_path(&self.root, ext_id).ok_or_else(|| AppError::not_found(ext_id))
     }
 
     fn read_item(&self, ext_id: &str) -> Result<(ItemFrontmatter, String), AppError> {
-        let path = self.item_path(ext_id);
+        let path = self.find_path(ext_id)?;
         let content = fs::read_to_string(&path).map_err(|_| AppError::not_found(ext_id))?;
         parse_item_file(&content)
     }
@@ -60,7 +60,9 @@ impl Adapter for MarkdownTodolistsAdapter {
     }
 
     fn set_lists(&mut self, lists: &[ListDef]) -> Result<(), AppError> {
-        io::write_lists_yaml(&self.root, lists)
+        io::write_lists_yaml(&self.root, lists)?;
+        io::ensure_list_dirs(&self.root, lists)?;
+        Ok(())
     }
 
     fn scan(&self) -> Result<Vec<Item>, AppError> {
@@ -82,7 +84,7 @@ impl Adapter for MarkdownTodolistsAdapter {
     ) -> Result<(Item, PathBuf), AppError> {
         let ext_id = match id {
             Some(id) => {
-                if self.item_path(id).exists() {
+                if io::find_item_path(&self.root, id).is_some() {
                     return Err(AppError::usage(format!("id '{id}' already exists")));
                 }
                 id.to_string()
@@ -108,6 +110,9 @@ impl Adapter for MarkdownTodolistsAdapter {
         let (mut fm, body) = self.read_item(ext_id)?;
         fm.list = target_list.to_string();
         fm.updated_at = Utc::now();
+        // Move file to target list directory
+        io::move_item_file(&self.root, ext_id, target_list)?;
+        // Rewrite frontmatter in new location
         self.write_item_fm(ext_id, &fm, &body)?;
         Ok(item_from_frontmatter(ext_id, &fm, &body))
     }
@@ -122,19 +127,13 @@ impl Adapter for MarkdownTodolistsAdapter {
     }
 
     fn delete_item(&mut self, ext_id: &str) -> Result<(), AppError> {
-        let path = self.item_path(ext_id);
-        if path.exists() {
-            fs::remove_file(&path)?;
-        }
+        let path = self.find_path(ext_id)?;
+        fs::remove_file(&path)?;
         Ok(())
     }
 
     fn editor_path(&self, ext_id: &str) -> Result<PathBuf, AppError> {
-        let path = self.item_path(ext_id);
-        if !path.exists() {
-            return Err(AppError::not_found(ext_id));
-        }
-        Ok(path)
+        self.find_path(ext_id)
     }
 
     fn apply_edit(

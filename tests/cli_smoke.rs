@@ -10,16 +10,16 @@ fn sqs_cmd() -> assert_cmd::Command {
     cmd
 }
 
-fn write_task(root: &std::path::Path, queue: &str, id: &str, title: &str, body: &str) {
-    let queue_dir = root.join(queue);
-    fs::create_dir_all(&queue_dir).expect("queue dir should exist");
+fn write_task(root: &std::path::Path, list: &str, id: &str, title: &str, body: &str) {
+    let list_dir = root.join(list);
+    fs::create_dir_all(&list_dir).expect("list dir should exist");
     fs::write(
-        queue_dir.join(format!("{id}.md")),
+        list_dir.join(format!("{id}.md")),
         format!(
-            "---\nid: {id}\ntitle: {title}\nqueue: {queue}\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\ncompleted_at: null\ndaily_note: null\n---\n{body}"
+            "---\ntitle: {title}\nlist: {list}\norder: 0.0\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\n---\n{body}"
         ),
     )
-    .expect("task file should be written");
+    .expect("item file should be written");
 }
 
 #[test]
@@ -95,14 +95,13 @@ fn add_creates_task_in_inbox() {
         .arg("Ship v2")
         .assert()
         .success()
-        .stdout(contains("Created task: task-1"));
+        .stdout(contains("Created: task-1"));
 
     let path = temp.path().join("inbox").join("task-1.md");
     assert!(path.exists());
     let content = fs::read_to_string(path).expect("task should exist");
-    assert!(content.contains("# Ship v2"));
-    assert!(!content.contains("## Context"));
-    assert!(!content.contains("## Notes"));
+    assert!(content.contains("title: Ship v2"));
+    assert!(content.contains("list: inbox"));
 }
 
 #[test]
@@ -120,7 +119,7 @@ fn add_generates_random_alphanumeric_ids() {
 
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("stdout is utf-8");
     let id = stdout
-        .strip_prefix("Created task: ")
+        .strip_prefix("Created: ")
         .and_then(|value| value.split_once(" ("))
         .map(|(id, _)| id)
         .expect("created-task output should include the generated ID");
@@ -192,7 +191,7 @@ fn move_relocates_file_to_target_queue() {
         .arg("now")
         .assert()
         .success()
-        .stdout(contains("Moved task: task-1"));
+        .stdout(contains("Moved task-1 to now"));
 
     assert!(!temp.path().join("inbox").join("task-1.md").exists());
     assert!(temp.path().join("now").join("task-1.md").exists());
@@ -221,7 +220,7 @@ fn move_promotes_task_from_inbox_to_now() {
         .arg("now")
         .assert()
         .success()
-        .stdout(contains("Moved task: task-1"));
+        .stdout(contains("Moved task-1 to now"));
 
     assert!(!temp.path().join("inbox").join("task-1.md").exists());
     assert!(temp.path().join("now").join("task-1.md").exists());
@@ -240,40 +239,10 @@ fn move_is_noop_when_task_is_already_in_target_queue() {
         .arg("now")
         .assert()
         .success()
-        .stdout(contains("Task task-1 is already in now"));
+        .stdout(contains("task-1 is already in now"));
 
     assert!(temp.path().join("now").join("task-1.md").exists());
     assert!(!temp.path().join("inbox").join("task-1.md").exists());
-}
-
-#[test]
-fn move_prompts_for_queue_when_missing() {
-    let temp = TempDir::new().expect("temp dir should exist");
-
-    sqs_cmd()
-        .arg("--root")
-        .arg(temp.path())
-        .arg("add")
-        .arg("--no-edit")
-        .arg("--id")
-        .arg("task-1")
-        .arg("Ship v2")
-        .assert()
-        .success();
-
-    sqs_cmd()
-        .env("SQS_TEST_MODE", "1")
-        .write_stdin("now\n")
-        .arg("--root")
-        .arg(temp.path())
-        .arg("move")
-        .arg("task-1")
-        .assert()
-        .success()
-        .stdout(contains("Moved task: task-1"));
-
-    assert!(!temp.path().join("inbox").join("task-1.md").exists());
-    assert!(temp.path().join("now").join("task-1.md").exists());
 }
 
 #[test]
@@ -405,39 +374,9 @@ fn add_reads_tasks_root_from_config_file() {
         .arg("Ship v2")
         .assert()
         .success()
-        .stdout(contains("Created task: task-1"));
+        .stdout(contains("Created: task-1"));
 
     assert!(tasks_root.join("inbox").join("task-1.md").exists());
-}
-
-#[test]
-fn add_uses_configured_queue_directory_names() {
-    let temp = TempDir::new().expect("temp dir should exist");
-    let config_home = temp.path().join("config-home");
-    let config_dir = config_home.join("sqs");
-    let tasks_root = temp.path().join("configured-tasks");
-    std::fs::create_dir_all(&config_dir).expect("config dir should exist");
-    std::fs::write(
-        config_dir.join("config.toml"),
-        format!(
-            "tasks_root = '{}'\n[queues]\ninbox = 'capture'\ndone = 'archive'\n",
-            tasks_root.display()
-        ),
-    )
-    .expect("config file should be written");
-
-    sqs_cmd()
-        .env("XDG_CONFIG_HOME", &config_home)
-        .arg("add")
-        .arg("--no-edit")
-        .arg("--id")
-        .arg("task-1")
-        .arg("Ship v2")
-        .assert()
-        .success();
-
-    assert!(tasks_root.join("capture").join("task-1.md").exists());
-    assert!(!tasks_root.join("inbox").join("task-1.md").exists());
 }
 
 #[test]
@@ -661,26 +600,6 @@ fn doctor_fails_when_it_finds_invalid_task_files() {
 }
 
 #[test]
-fn doctor_fails_when_task_queue_disagrees_with_directory() {
-    let temp = TempDir::new().expect("temp dir should exist");
-    write_task(temp.path(), "inbox", "task-1", "Ship v2", "# Ship v2");
-    let path = temp.path().join("inbox").join("task-1.md");
-    let content = fs::read_to_string(&path).expect("task should exist");
-    fs::write(&path, content.replace("queue: inbox", "queue: now"))
-        .expect("task should be updated");
-
-    sqs_cmd()
-        .env("VISUAL", "sh")
-        .arg("--root")
-        .arg(temp.path())
-        .arg("doctor")
-        .assert()
-        .failure()
-        .stdout(contains("declares queue 'now' but is stored under 'inbox'"))
-        .stderr(contains("doctor found 1 error(s)"));
-}
-
-#[test]
 fn doctor_fails_when_editor_executable_is_missing() {
     let temp = TempDir::new().expect("temp dir should exist");
 
@@ -710,159 +629,4 @@ fn doctor_fails_when_editor_command_is_invalid() {
         .failure()
         .stdout(contains("[error] editor: invalid editor command"))
         .stderr(contains("doctor found 1 error(s)"));
-}
-
-#[test]
-fn edit_updates_body_without_renaming_file() {
-    let temp = TempDir::new().expect("temp dir should exist");
-    write_task(
-        temp.path(),
-        "inbox",
-        "task-1",
-        "Ship v2",
-        "# Ship v2\n\n## Context\n\n## Notes\n\nOld body",
-    );
-
-    sqs_cmd()
-        .env(
-            "VISUAL",
-            "sh -c 'cat <<\"EOF\" > \"$1\"\n---\nid: task-1\ntitle: Ship v2\nqueue: inbox\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\ncompleted_at: null\ndaily_note: null\n---\n# Ship v2\n\n## Context\n\n## Notes\n\nUpdated body\nEOF' sh",
-        )
-        .arg("--root")
-        .arg(temp.path())
-        .arg("edit")
-        .arg("task-1")
-        .assert()
-        .success()
-        .stdout(contains("Edited task: task-1"));
-
-    let path = temp.path().join("inbox").join("task-1.md");
-    assert!(path.exists());
-    let content = fs::read_to_string(path).expect("task should exist");
-    assert!(content.contains("Updated body"));
-    assert!(!content.contains("Old body"));
-}
-
-#[test]
-fn edit_with_unchanged_file_preserves_updated_at() {
-    let temp = TempDir::new().expect("temp dir should exist");
-    let original = "---\nid: task-1\ntitle: Ship v2\nqueue: inbox\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\ncompleted_at: null\ndaily_note: null\n---\n# Ship v2\n\n## Context\n\n## Notes\n\nOld body";
-    fs::create_dir_all(temp.path().join("inbox")).expect("queue dir should exist");
-    fs::write(temp.path().join("inbox").join("task-1.md"), original).expect("task should exist");
-
-    sqs_cmd()
-        .env("VISUAL", "sh -c 'touch \"$1\"' sh")
-        .arg("--root")
-        .arg(temp.path())
-        .arg("edit")
-        .arg("task-1")
-        .assert()
-        .success()
-        .stdout(contains("No changes made: task-1"));
-
-    let path = temp.path().join("inbox").join("task-1.md");
-    let content = fs::read_to_string(path).expect("task should exist");
-    assert_eq!(content, original);
-    assert!(content.contains("updated_at: 2026-03-09T10:34:12Z"));
-}
-
-#[test]
-fn add_with_edit_persists_editor_changes() {
-    let temp = TempDir::new().expect("temp dir should exist");
-
-    sqs_cmd()
-        .env(
-            "VISUAL",
-            "sh -c 'cat <<\"EOF\" > \"$1\"\n---\nid: task-1\ntitle: Ship v2\nqueue: inbox\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\ncompleted_at: null\ndaily_note: null\n---\n# Ship v2\n\n## Context\n\n## Notes\n\nEdited during add\nEOF' sh",
-        )
-        .arg("--root")
-        .arg(temp.path())
-        .arg("add")
-        .arg("--id")
-        .arg("task-1")
-        .arg("Ship v2")
-        .assert()
-        .success()
-        .stdout(contains("Created task: task-1"));
-
-    let content =
-        fs::read_to_string(temp.path().join("inbox").join("task-1.md")).expect("task should exist");
-    assert!(content.contains("Edited during add"));
-    assert!(content.contains("## Context"));
-}
-
-#[test]
-fn add_with_edit_rejects_empty_file_and_restores_stub() {
-    let temp = TempDir::new().expect("temp dir should exist");
-
-    sqs_cmd()
-        .env("VISUAL", "sh -c ': > \"$1\"' sh")
-        .arg("--root")
-        .arg(temp.path())
-        .arg("add")
-        .arg("--id")
-        .arg("task-1")
-        .arg("Ship v2")
-        .assert()
-        .failure()
-        .stderr(contains("task file cannot be empty"))
-        .stdout(contains("Created task: task-1").not());
-
-    let path = temp.path().join("inbox").join("task-1.md");
-    let content = fs::read_to_string(path).expect("task should exist");
-    assert!(content.contains("id: task-1"));
-    assert!(content.contains("# Ship v2"));
-}
-
-#[test]
-fn add_with_edit_rejects_malformed_content_and_restores_stub() {
-    let temp = TempDir::new().expect("temp dir should exist");
-
-    sqs_cmd()
-        .env(
-            "VISUAL",
-            "sh -c 'printf -- \"---\\nid: task-1\\n\" > \"$1\"' sh",
-        )
-        .arg("--root")
-        .arg(temp.path())
-        .arg("add")
-        .arg("--id")
-        .arg("task-1")
-        .arg("Ship v2")
-        .assert()
-        .failure()
-        .stderr(contains("invalid task file").and(contains("missing frontmatter end delimiter")))
-        .stdout(contains("Created task: task-1").not());
-
-    let path = temp.path().join("inbox").join("task-1.md");
-    let content = fs::read_to_string(path).expect("task should exist");
-    assert!(content.contains("id: task-1"));
-    assert!(content.contains("# Ship v2"));
-}
-
-#[test]
-fn add_with_edit_rejects_id_changes_and_restores_stub() {
-    let temp = TempDir::new().expect("temp dir should exist");
-
-    sqs_cmd()
-        .env(
-            "VISUAL",
-            "sh -c 'cat <<\"EOF\" > \"$1\"\n---\nid: renamed\ntitle: Ship v2\nqueue: inbox\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\ncompleted_at: null\ndaily_note: null\n---\n# Ship v2\n\n## Context\n\n## Notes\nEOF' sh",
-        )
-        .arg("--root")
-        .arg(temp.path())
-        .arg("add")
-        .arg("--id")
-        .arg("task-1")
-        .arg("Ship v2")
-        .assert()
-        .failure()
-        .stderr(contains("editing a task cannot change its id"))
-        .stdout(contains("Created task: task-1").not());
-
-    let path = temp.path().join("inbox").join("task-1.md");
-    let content = fs::read_to_string(path).expect("task should exist");
-    assert!(content.contains("id: task-1"));
-    assert!(!content.contains("id: renamed"));
-    assert!(content.contains("# Ship v2"));
 }

@@ -2,16 +2,17 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::adapter::Adapter;
+use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
 use crate::io::{input, output};
 
 #[derive(Debug, Parser)]
-#[command(about = "Delete a task permanently")]
+#[command(about = "Delete an item permanently")]
 pub struct Delete {
     pub task: Option<String>,
 
-    /// Prompt for confirmation before deleting
     #[arg(long, short = 'i')]
     pub interactive: bool,
 }
@@ -20,22 +21,21 @@ pub fn handle_delete(
     Delete { task, interactive }: Delete,
     root: Option<PathBuf>,
 ) -> Result<(), AppError> {
-    let repo = helpers::resolve_repo(root)?;
-    let Some(stored) = helpers::resolve_task_ref(task, &repo, "Select task to delete")? else {
-        return Ok(());
-    };
+    let resolved = helpers::resolve_config(root)?;
+    let mut adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
+
+    let query = task.ok_or_else(|| AppError::usage("item ID required"))?;
+    let item = helpers::resolve_item(&adapter, &query)?;
 
     if interactive {
-        let confirmed =
-            input::prompt_confirm(&format!("Permanently delete '{}'?", stored.task.title))?;
+        let confirmed = input::prompt_confirm(&format!("Permanently delete '{}'?", item.title))?;
         if !confirmed {
             output::print_info("Delete cancelled");
             return Ok(());
         }
     }
 
-    let id = stored.task.id.clone();
-    repo.delete(&id)?;
-    output::print_info(&format!("Deleted task: {id}"));
+    adapter.delete_item(&item.ext_id)?;
+    output::print_info(&format!("Deleted: {}", item.ext_id));
     Ok(())
 }

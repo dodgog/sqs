@@ -2,25 +2,37 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::adapter::Adapter;
+use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
-use crate::domain::filter::matches_query;
-use crate::io::output;
 
 #[derive(Debug, Parser)]
-#[command(about = "Find tasks by text")]
+#[command(about = "Find items by text")]
 pub struct Find {
     pub query: String,
 }
 
 pub fn handle_find(Find { query }: Find, root: Option<PathBuf>) -> Result<(), AppError> {
-    let repo = helpers::resolve_repo(root)?;
-    let matches = repo
-        .scan_all()?
-        .into_iter()
-        .filter(|stored| matches_query(&stored.task, &query))
-        .collect::<Vec<_>>();
+    let resolved = helpers::resolve_config(root)?;
+    let adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
+    let items = adapter.scan()?;
+    let q = query.to_lowercase();
+    let matches: Vec<_> = items
+        .iter()
+        .filter(|i| {
+            i.title.to_lowercase().contains(&q)
+                || i.ext_id.to_lowercase().contains(&q)
+                || i.body.to_lowercase().contains(&q)
+        })
+        .collect();
 
-    output::print_search_results(&matches);
+    if matches.is_empty() {
+        println!("No items found");
+    } else {
+        for item in &matches {
+            println!("[{}] {}  {}", item.list, item.ext_id, item.title);
+        }
+    }
     Ok(())
 }

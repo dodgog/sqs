@@ -4,7 +4,7 @@ use crate::storage::config;
 
 use super::args::{Cli, Command};
 use super::commands::{
-    add, config as config_cmd, delete, doctor, edit, find, helpers, init, list, move_cmd, show,
+    add, config as config_cmd, delete, doctor, edit, find, init, list, move_cmd, show,
 };
 
 pub fn handle(cli: Cli) -> Result<(), AppError> {
@@ -44,15 +44,24 @@ fn handle_default(root: Option<std::path::PathBuf>) -> Result<(), AppError> {
         }
     };
 
-    let repo = helpers::repo_from_config(&resolved);
-
-    {
-        let tasks = repo.list()?;
-        if tasks.is_empty() {
-            let inspection = config::inspect(None)?;
-            output::print_getting_started(inspection.config_path.as_deref());
-        } else {
-            output::print_dashboard(&tasks);
+    let adapter = crate::adapters::markdown_todolists::MarkdownTodolistsAdapter::new(
+        resolved.tasks_root.clone(),
+    );
+    let items = crate::adapter::Adapter::scan(&adapter)?;
+    if items.is_empty() {
+        let inspection = config::inspect(None)?;
+        output::print_getting_started(inspection.config_path.as_deref());
+    } else {
+        let lists = crate::adapter::Adapter::lists(&adapter);
+        for list_def in &lists {
+            let list_items: Vec<_> = items.iter().filter(|i| i.list == list_def.name).collect();
+            if !list_items.is_empty() {
+                println!("{} ({})", list_def.name, list_items.len());
+                for item in &list_items {
+                    println!("  {}  {}", item.ext_id, item.title);
+                }
+                println!();
+            }
         }
     }
 

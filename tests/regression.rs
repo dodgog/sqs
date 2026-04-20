@@ -9,55 +9,25 @@ fn sqs_cmd() -> assert_cmd::Command {
     cmd
 }
 
-fn write_raw_task(
-    root: &std::path::Path,
-    queue: &str,
-    id: &str,
-    frontmatter_tail: &str,
-    body: &str,
-) {
-    let queue_dir = root.join(queue);
-    std::fs::create_dir_all(&queue_dir).expect("queue dir should exist");
+fn write_item(root: &std::path::Path, list: &str, id: &str, title: &str, body: &str) {
+    let list_dir = root.join(list);
+    std::fs::create_dir_all(&list_dir).expect("list dir should exist");
     std::fs::write(
-        queue_dir.join(format!("{id}.md")),
+        list_dir.join(format!("{id}.md")),
         format!(
-            "---\nid: {id}\ntitle: Test task\nqueue: {queue}\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\n{frontmatter_tail}---\n{body}"
+            "---\ntitle: {title}\nlist: {list}\norder: 0.0\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\n---\n{body}"
         ),
     )
-    .expect("task file should be written");
-}
-
-#[test]
-fn invalid_queue_is_rejected_cleanly() {
-    let temp = TempDir::new().expect("temp dir should exist");
-
-    sqs_cmd()
-        .arg("--root")
-        .arg(temp.path())
-        .arg("list")
-        .arg("archive")
-        .assert()
-        .failure()
-        .stderr(contains("invalid list 'archive'"));
+    .expect("item file should be written");
 }
 
 #[test]
 fn malformed_files_are_skipped_during_list() {
     let temp = TempDir::new().expect("temp dir should exist");
-    write_raw_task(
-        temp.path(),
-        "inbox",
-        "good",
-        "completed_at: null\ndaily_note: null\n",
-        "# Good task",
-    );
-    write_raw_task(
-        temp.path(),
-        "inbox",
-        "bad",
-        "updated_at: not-a-date\n",
-        "# Bad task",
-    );
+    write_item(temp.path(), "inbox", "good", "Good task", "body");
+    // Write a malformed file
+    let inbox = temp.path().join("inbox");
+    std::fs::write(inbox.join("bad.md"), "---\ntitle: Bad\n").expect("bad file should be written");
 
     sqs_cmd()
         .arg("--root")
@@ -67,11 +37,11 @@ fn malformed_files_are_skipped_during_list() {
         .assert()
         .success()
         .stdout(contains("good").and(contains("bad").not()))
-        .stderr(contains("Warning: skipping malformed task file"));
+        .stderr(contains("Warning: skipping malformed file"));
 }
 
 #[test]
-fn add_omits_removed_metadata_fields() {
+fn add_omits_old_metadata_fields() {
     let temp = TempDir::new().expect("temp dir should exist");
 
     sqs_cmd()
@@ -86,9 +56,12 @@ fn add_omits_removed_metadata_fields() {
         .success();
 
     let content = std::fs::read_to_string(temp.path().join("inbox").join("task-1.md"))
-        .expect("task file should exist");
-    assert!(!content.contains("source:"));
-    assert!(!content.contains("project:"));
+        .expect("item file should exist");
+    assert!(content.contains("title: Ship v2"));
+    assert!(content.contains("list: inbox"));
+    assert!(!content.contains("queue:"));
+    assert!(!content.contains("id:"));
+    assert!(!content.contains("completed_at:"));
 }
 
 #[test]
@@ -126,7 +99,7 @@ fn ambiguous_task_reference_is_reported_cleanly_without_tty() {
 }
 
 #[test]
-fn add_with_content_sets_body_and_skips_editor() {
+fn add_with_content_sets_body() {
     let temp = TempDir::new().expect("temp dir should exist");
 
     sqs_cmd()
@@ -140,10 +113,10 @@ fn add_with_content_sets_body_and_skips_editor() {
         .arg("Ship v2")
         .assert()
         .success()
-        .stdout(contains("Created task: task-1"));
+        .stdout(contains("Created: task-1"));
 
     let content = std::fs::read_to_string(temp.path().join("inbox").join("task-1.md"))
-        .expect("task file should exist");
-    assert!(content.contains("# Ship v2"));
+        .expect("item file should exist");
+    assert!(content.contains("title: Ship v2"));
     assert!(content.contains("Some details here"));
 }

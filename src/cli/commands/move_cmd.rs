@@ -1,37 +1,48 @@
 use std::path::PathBuf;
 
-use chrono::Utc;
 use clap::Parser;
 
+use crate::adapter::Adapter;
+use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
-use crate::domain::task::Queue;
 use crate::io::output;
 
 #[derive(Debug, Parser)]
-#[command(about = "Move a task to a different queue")]
+#[command(about = "Move an item to a different list")]
 pub struct Move {
     pub task: Option<String>,
 
-    #[arg(value_parser = helpers::parse_queue)]
-    pub queue: Option<Queue>,
+    pub list: Option<String>,
 }
 
-pub fn handle_move(Move { task, queue }: Move, root: Option<PathBuf>) -> Result<(), AppError> {
-    let repo = helpers::resolve_repo(root)?;
-    let Some(stored) = helpers::resolve_task_ref(task, &repo, "Select task to move")? else {
-        return Ok(());
-    };
+pub fn handle_move(Move { task, list }: Move, root: Option<PathBuf>) -> Result<(), AppError> {
+    let resolved = helpers::resolve_config(root)?;
+    let mut adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
 
-    let Some(queue) = helpers::resolve_target_queue(stored.task.queue, queue)? else {
-        return Ok(());
-    };
-    if stored.task.queue == queue {
-        output::print_info(&format!("Task {} is already in {}", stored.task.id, queue));
+    let query = task.ok_or_else(|| AppError::usage("item ID required"))?;
+    let item = adapter.find_item(&query).or_else(|_| {
+        // Try prefix match
+        let items = adapter.scan()?;
+        let matches: Vec<_> = items
+            .iter()
+            .filter(|i| i.ext_id.starts_with(&query))
+            .collect();
+        match matches.len() {
+            1 => Ok(matches[0].clone()),
+            0 => Err(AppError::not_found(&query)),
+            _ => Err(AppError::ambiguous_task_ref(&query)),
+        }
+    })?;
+
+    let target = list.ok_or_else(|| AppError::usage("target list required"))?;
+
+    if item.list == target {
+        output::print_info(&format!("{} is already in {target}", item.ext_id));
         return Ok(());
     }
 
-    let (task, path, _) = repo.move_to_queue(&stored.task.id, queue, Utc::now())?;
-    output::print_info(&format!("Moved task: {} ({})", task.id, path.display()));
+    adapter.move_item(&item.ext_id, &target)?;
+    output::print_info(&format!("Moved {} to {target}", item.ext_id));
     Ok(())
 }

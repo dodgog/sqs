@@ -30,6 +30,12 @@ pub fn handle_init(_: Init, root: Option<PathBuf>) -> Result<(), AppError> {
     fs::create_dir_all(&tasks_dir)?;
     fs::create_dir_all(&cache_dir)?;
 
+    // Create list subdirectories
+    let lists = default_lists();
+    for list in &lists {
+        fs::create_dir_all(tasks_dir.join(&list.name))?;
+    }
+
     // Write sqs.toml
     fs::write(
         &config_path,

@@ -2,51 +2,48 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::adapter::Adapter;
+use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
-use crate::domain::task::Queue;
 use crate::io::output;
 
 #[derive(Debug, Parser)]
-#[command(about = "List tasks")]
+#[command(about = "List items")]
 pub struct List {
-    #[arg(value_parser = helpers::parse_queue)]
-    pub queue: Option<Queue>,
+    pub list: Option<String>,
 }
 
-pub enum QueueSelection {
-    Inbox,
-    Now,
-}
+pub fn handle_list(List { list }: List, root: Option<PathBuf>) -> Result<(), AppError> {
+    let resolved = helpers::resolve_config(root)?;
+    let adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
+    let items = adapter.scan()?;
 
-pub fn handle_list(List { queue }: List, root: Option<PathBuf>) -> Result<(), AppError> {
-    let repo = helpers::resolve_repo(root)?;
-
-    match queue {
-        Some(queue) => print_resolved_queue(queue, &repo)?,
+    match list {
+        Some(name) => {
+            let filtered: Vec<_> = items.iter().filter(|i| i.list == name).collect();
+            println!("{name} ({})", filtered.len());
+            for item in &filtered {
+                println!("  {}  {}", item.ext_id, item.title);
+            }
+        }
         None => {
-            let tasks = repo.list()?;
-            output::print_dashboard(&tasks);
+            let lists = adapter.lists();
+            for list_def in &lists {
+                let list_items: Vec<_> = items.iter().filter(|i| i.list == list_def.name).collect();
+                if !list_items.is_empty() {
+                    println!("{} ({})", list_def.name, list_items.len());
+                    for item in &list_items {
+                        println!("  {}  {}", item.ext_id, item.title);
+                    }
+                    println!();
+                }
+            }
+            if items.is_empty() {
+                output::print_getting_started(None);
+            }
         }
     }
 
-    Ok(())
-}
-
-pub fn print_queue(selection: QueueSelection, root: Option<PathBuf>) -> Result<(), AppError> {
-    let repo = helpers::resolve_repo(root)?;
-    let queue = match selection {
-        QueueSelection::Inbox => Queue::Inbox,
-        QueueSelection::Now => Queue::Now,
-    };
-    print_resolved_queue(queue, &repo)
-}
-
-fn print_resolved_queue(
-    queue: Queue,
-    repo: &crate::storage::repo::TaskRepo,
-) -> Result<(), AppError> {
-    let tasks = repo.list_queue(queue)?;
-    output::print_queue_tasks(queue, &tasks);
     Ok(())
 }

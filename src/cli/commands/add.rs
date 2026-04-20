@@ -1,21 +1,20 @@
 use std::{fs, path::PathBuf, process::Command};
 
-use chrono::Utc;
 use clap::Parser;
 
-use crate::adapters::markdown_todolists::identity;
+use crate::adapter::Adapter;
+use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
-use crate::domain::{id::validate_user_id, task::Task};
 use crate::io::{input, output};
 
 #[derive(Debug, Parser)]
-#[command(about = "Add a task")]
+#[command(about = "Add an item")]
 pub struct Add {
     pub title: Option<String>,
 
-    #[arg(long, value_parser = helpers::parse_queue)]
-    pub queue: Option<crate::domain::task::Queue>,
+    #[arg(long)]
+    pub list: Option<String>,
 
     #[arg(long)]
     pub no_edit: bool,
@@ -30,7 +29,7 @@ pub struct Add {
 pub fn handle_add(
     Add {
         title,
-        queue,
+        list,
         no_edit,
         content,
         id,
@@ -38,44 +37,20 @@ pub fn handle_add(
     root: Option<PathBuf>,
 ) -> Result<(), AppError> {
     let resolved = helpers::resolve_config(root)?;
-    let repo = helpers::repo_from_config(&resolved);
+    let mut adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
+
     let title = match title {
         Some(title) => title,
         None => input::prompt_input("Title:")?,
     };
 
-    let task_id = match id {
-        Some(id) => {
-            validate_user_id(&id)?;
-            if repo.id_exists(&id) {
-                return Err(AppError::usage(format!("id '{}' already exists", id)));
-            }
-            id
-        }
-        None => {
-            let existing = repo.scan_all()?.into_iter().map(|s| s.task.id).collect();
-            identity::generate_id(&existing)
-        }
-    };
+    let list = list.unwrap_or_else(|| "inbox".to_string());
+    let has_content = content.is_some();
+    let body = content.unwrap_or_default();
 
-    let now = Utc::now();
-    let mut task = Task::new(task_id, title, now);
+    let (item, path) = adapter.create_item(id.as_deref(), &list, &title, &body, 0.0)?;
 
-    if let Some(ref body) = content {
-        task.body = format!("# {}\n\n{}\n", task.title, body);
-    }
-
-    if let Some(queue) = queue {
-        task.move_to(queue, now);
-        if task.queue != queue {
-            task.queue = queue;
-            task.normalize(now);
-        }
-    }
-
-    let path = repo.create(&task)?;
-
-    if !no_edit && content.is_none() {
+    if !no_edit && !has_content {
         let original_content = fs::read_to_string(&path)?;
         let editor = helpers::resolve_editor()?;
         let status = Command::new(&editor.program)
@@ -86,23 +61,10 @@ pub fn handle_add(
             return Err(AppError::message("editor command failed"));
         }
 
-        let edited_content = fs::read_to_string(&path)?;
-        if edited_content.trim().is_empty() {
-            fs::write(&path, original_content)?;
-            return Err(AppError::message("task file cannot be empty"));
-        }
-
-        if edited_content != original_content
-            && let Err(error) =
-                repo.finalize_added_edit(&task.id, &path, &edited_content, Utc::now())
-        {
-            fs::write(&path, original_content)?;
-            return Err(error);
-        }
+        adapter.finalize_add_edit(&item.ext_id, &path, &original_content)?;
     }
 
-    output::print_info(&format!("Created task: {} ({})", task.id, path.display()));
-
+    output::print_info(&format!("Created: {} ({})", item.ext_id, path.display()));
     Ok(())
 }
 
