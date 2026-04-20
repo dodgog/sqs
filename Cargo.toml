@@ -1,6 +1,6 @@
 [package]
 name = "sqs"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 description = "Reorder lists from the terminal"
 repository = "https://github.com/dodgog/sqs"
