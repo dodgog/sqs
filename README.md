@@ -1,124 +1,131 @@
-# TQS - Terminal Task Queue
+# sqs
 
-A terminal-native task manager. Tasks are Markdown files organized in queues. Run `tqs` to get a full-screen dashboard, or use CLI commands for scripting and automation.
+A vim-style terminal tool for reordering items across named lists. Items are Markdown files with YAML frontmatter. Lists are defined in a `lists.yaml` sidecar. Everything lives in a flat folder.
 
-<!-- TODO: add a screenshot of the dashboard here -->
+## Quick start
 
-## The Dashboard
-
-Just run `tqs`. You get a three-panel view: queues on the left, tasks in the middle, detail on the right.
-
-```text
-┌ Queues ───┬ Tasks in queue now (2) ──┬ Task detail: Ship v2 ──┐
-│ > now   2 │ > 0f3  Ship v2           │ # Ship v2              │
-│   next  1 │   a7k  Plan release      │                        │
-│   later 3 │                          │ Body text goes here    │
-│  ──────── │                          │                        │
-│   inbox 5 │                          │                        │
-│  ──────── │                          │                        │
-│   done 12 │                          │                        │
-│   all  23 │                          │                        │
-└───────────┴──────────────────────────┴────────────────────────┘
- [Normal] h/l:panel j/k:nav Tab:queue a:add d:done s:start q:quit
+```sh
+sqs init        # creates sqs.toml, tasks/, lists.yaml
+sqs tui         # launch the interactive TUI
+sqs add "thing" # add from CLI
+sqs list        # print items
 ```
 
-The sidebar groups queues into three sections: active work (now/next/later), triage (inbox), and archive (done/all).
+## TUI
 
-Navigate with `h/l` between panels, `j/k` within them. Everything else is a single keypress away:
+Three panes: lists (left), items (center), preview (right).
+
+### Normal mode
 
 | Key | Action |
 |-----|--------|
-| `a` | Add a task |
-| `e` | Edit in your `$EDITOR` |
-| `d` | Mark done |
-| `s` | Start (move to now) |
-| `m` | Move to another queue |
-| `x` | Delete |
-| `/` | Search across all queues |
-| `t` | Triage inbox |
-| `q` | Quit |
+| `j` / `k` | navigate items (stops at list boundary) |
+| `J` / `K` | reorder item within list; at boundary, crosses into adjacent list |
+| `<` / `>` | switch to prev/next list |
+| `[` / `]` | jump to first/last item in current list |
+| `{` / `}` | move item to top/bottom of current list |
+| `h` / `l` | switch pane |
+| `space` | toggle sidebar / items pane |
+| `v` / `V` | enter visual selection mode |
+| `o` / `a` | add item after cursor |
+| `O` / `i` | add item before cursor |
+| `m` | move item to list (picker) |
+| `e` | edit item in $EDITOR |
+| `x` | delete item |
+| `/` | search |
+| `r` | refresh |
+| `q` / `Esc` | quit |
 
-Use `tqs --no-tui` if you want the old plain-text output.
+### Visual mode
 
-## Install
+Select multiple items with `j`/`k`, then act on the selection:
 
-Homebrew:
+| Key | Action |
+|-----|--------|
+| `j` / `k` | extend selection |
+| `J` / `K` | reorder selection as a block; consolidates across lists first |
+| `<` / `>` | send selection to prev/next list |
+| `{` / `}` | move selection to top/bottom of list |
+| `[` / `]` | extend selection to first/last item |
+| `m` | move selection to list (picker) |
+| `h` / `l` | exit visual, switch pane |
+| `Esc` / `v` | cancel selection |
 
-```bash
-brew tap andreabergia/homebrew-tap
-brew install tqs
+### Sidebar
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | navigate lists |
+| `J` / `K` | reorder lists (persisted to lists.yaml) |
+| `v` + `j`/`k` + `J`/`K` | visual select and reorder multiple lists |
+
+### All view
+
+The last entry in the sidebar. Shows every item grouped by list with headings. Empty lists are shown. Reordering across list boundaries moves items between lists. The display order follows the sidebar list order.
+
+## File format
+
+Each item is a `.md` file in the tasks folder. Filename is the ID (4 alphanumeric chars).
+
+```yaml
+---
+title: My item
+list: now
+order: 0.0
+created_at: 2026-04-19T12:00:00Z
+updated_at: 2026-04-19T12:00:00Z
+---
+
+Freeform body text.
 ```
 
-From source:
+`lists.yaml` defines the available lists and their display order:
 
-```bash
-cargo install --path .
+```yaml
+- name: now
+  display: now
+  order: 0.0
+- name: next
+  display: next
+  order: 1.0
+- name: later
+  display: later
+  order: 2.0
+- name: inbox
+  display: inbox
+  order: 3.0
+- name: done
+  display: done
+  order: 4.0
 ```
 
-## Setup
+## CLI
 
-Create `~/.config/tqs/config.toml`:
+```
+sqs init              scaffold sqs.toml + tasks/ + lists.yaml
+sqs tui               launch TUI
+sqs add [--id ID] T   add item with title T
+sqs list [LIST]        print items
+sqs show ID            print item detail
+sqs move ID LIST       move item to list
+sqs edit ID            edit in $EDITOR
+sqs delete ID          delete item
+sqs find QUERY         search items
+sqs config             show config
+sqs doctor             check health
+```
+
+## Config
+
+`sqs.toml` is discovered by walking up from the current directory (like `Cargo.toml`). Falls back to `~/.config/sqs/config.toml` or `$SQS_ROOT`.
 
 ```toml
-tasks_root = "/path/to/tasks"
+default_adapter = "markdown-todolists"
+
+[adapters.markdown-todolists]
+root = "./tasks"
 ```
 
-Or, if you use Obsidian:
+## Architecture
 
-```toml
-obsidian_vault_dir = "/path/to/My Vault"
-```
-
-That's it. Run `tqs config` to verify, `tqs doctor` to check for problems.
-
-## How It Works
-
-Tasks live in five queues: **inbox**, **now**, **next**, **later**, **done**. Each task is a Markdown file with YAML frontmatter, stored under `<tasks_root>/<queue>/<id>.md`.
-
-The typical workflow:
-
-```bash
-tqs add "Reply to billing alert"    # lands in inbox
-tqs                                  # open dashboard, triage, move tasks around
-tqs done 0f3                         # mark it done
-```
-
-You can also do everything from the CLI:
-
-```bash
-tqs add "Plan rollout" --queue now
-tqs start 0f3
-tqs move a7k later
-tqs find billing
-tqs triage
-```
-
-Tasks are resolved by exact ID, unique ID prefix, or unique title substring. If ambiguous and you're on a TTY, you get an interactive picker.
-
-## Optional Features
-
-**Daily notes** -- if you set `daily_notes_dir`, completing a task appends a wiki-link entry to today's daily note.
-
-**Obsidian integration** -- `obsidian_vault_dir` is a shortcut that sets `tasks_root` to `<vault>/Tasks` and `daily_notes_dir` to `<vault>/Daily Notes`.
-
-**Custom queue directories** -- rename the on-disk folders without changing the queue names:
-
-```toml
-[queues]
-now = "focus"
-done = "archive"
-```
-
-## Learn More
-
-- [USAGE.md](USAGE.md) -- full CLI and dashboard reference
-- [ARCHITECTURE.md](ARCHITECTURE.md) -- code structure and data flow
-- [CHANGELOG.md](CHANGELOG.md) -- release history
-
-## Releasing
-
-```bash
-scripts/release.sh patch --execute
-```
-
-See [USAGE.md](USAGE.md) for preflight checks and detailed process.
+Pluggable adapter layer. The TUI and CLI work through the `Adapter` trait. The shipped adapter (`markdown-todolists`) stores items as flat `.md` files. Other adapters can implement the same trait for different backends.
