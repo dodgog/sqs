@@ -10,3 +10,12 @@ pre-release-commit-message = "chore(release): {{version}}"
 file = "flake.nix"
 search = 'version = "[^"]*"'
 replace = 'version = "{{version}}"'
+
+[[pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "## \\[Unreleased\\]"
+replace = """
+## [Unreleased]
+
+## [{{version}}] - {{date}}"""
+exactly = 1

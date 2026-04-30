@@ -42,7 +42,7 @@ pub trait Adapter: Send {
 - List definitions in `lists.yaml`
 - Uses FNV hash for change detection (`content_hash` field)
 
-**Why This Matters**: Both the TUI and CLI work exclusively through the adapter. New backends (e.g., database, Obsidian vault) only need to implement this trait.
+**Why This Matters**: Both the TUI and CLI work exclusively through the adapter. New backends only need to implement this trait.
 
 ---
 
@@ -80,8 +80,7 @@ src/
 │       └── io.rs             # File I/O helpers
 ├── app/
 │   ├── service.rs            # Entry point: parse CLI, dispatch to TUI or CLI handlers
-│   ├── app_error.rs          # Error type (thiserror-based)
-│   └── operations.rs         # Shared business logic
+│   └── app_error.rs          # Error type (thiserror-based)
 ├── cache/                    # SQLite cache (in-memory or file-based)
 │   └── mod.rs                # SqliteCache: upsert/query/reconcile
 ├── cli/
@@ -97,8 +96,8 @@ src/
 │   └── output.rs             # Pretty-printing
 ├── storage/
 │   ├── config.rs             # Config discovery + loading (sqs.toml → ResolvedConfig)
-│   ├── editor.rs             # $EDITOR integration
-│   └── format.rs             # File format errors
+│   ├── doctor.rs             # Configuration diagnostics
+│   └── editor.rs             # $EDITOR integration
 ├── tui/                      # Interactive terminal UI
 │   ├── mod.rs                # Entry point: setup terminal, run event loop
 │   ├── app_state.rs          # TuiApp (main state) + navigation enums
@@ -112,7 +111,6 @@ src/
 │       ├── add_form.rs       # Quick-add form
 │       ├── status_bar.rs     # Bottom status line
 │       └── mod.rs
-├── domain/                   # (May contain types if not in adapter)
 └── test_support.rs           # Test fixtures
 ```
 
@@ -226,7 +224,6 @@ root = "./tasks"
 Returns `ResolvedConfig` with:
 - `tasks_root`: Where `.md` files live
 - `state_dir`: For internal state (cache, etc.)
-- Optional: `obsidian_vault_dir`, `daily_notes_dir` (future extensions)
 
 ---
 

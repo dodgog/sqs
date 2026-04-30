@@ -4,7 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project uses SemVer tags (`vX.Y.Z`).
 
-## [Unreleased] - sqs rewrite
+## [Unreleased]
+
+### Changed
+
+- `release.toml` auto-promotes the `[Unreleased]` CHANGELOG block on each release; cargo-dist uses the matching `[X.Y.Z]` section as the GitHub Release body.
+- `dist-workspace.toml` and `release.yml` pinned to cargo-dist `0.30.2` to match the version available in the local nix-darwin flake.
+- `RELEASING.md` rewritten: prerequisites now point at the system flake's `pkgs.rustup` / `pkgs.cargo-release` / `pkgs.cargo-dist` (no per-project dev shell).
+
+### Removed
+
+- Obsidian vault and daily-notes coupling: schema fields, doctor checks, task frontmatter field, related tests. Anyone with `obsidian_vault_dir` or `daily_notes_dir` in their `config.toml` will get a parse error and must remove those keys.
+- Legacy `Task`/`Queue`/`TaskRepo`/`QueueDirs`/`TaskFrontmatter` types, `domain::filter`, `domain::id`, `storage::repo`, `storage::format`, `storage::id_state`, `app::operations` — all dead code from the `tqs` fork. The live CLI/TUI exclusively use `Adapter` → `Item`/`ListDef`.
+- `sqs doctor` no longer scans task files or id-generator state files; the `--fix` flag is now a no-op.
+- Stale `ARCHITECTURE.md`.
+
+## [0.3.3] - 2026-04-20
+
+### Added
+
+- Folder-based storage for sublists in the markdown adapter.
+
+## [0.3.2] - 2026-04-20 - sqs rewrite
 
 ### Added
 
