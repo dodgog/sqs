@@ -1,4 +1,7 @@
 /target
+/dev-install.sh
+/result
+/result-*
 todos
 !docs/todos/
 !docs/todos/**
