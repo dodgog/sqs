@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use crate::adapter::Adapter;
-use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
 use crate::storage::editor::ResolvedEditor;
@@ -13,22 +12,16 @@ use crate::storage::editor::ResolvedEditor;
 pub struct Doctor;
 
 pub fn handle_doctor(_: Doctor, root: Option<PathBuf>) -> Result<(), AppError> {
-    let resolved = helpers::resolve_config(root)?;
+    let adapter = helpers::build_adapter(root)?;
     let mut errors = 0;
     let mut ok = 0;
 
-    // Config
-    println!(
-        "[ok] config: resolved tasks_root = {}",
-        resolved.tasks_root.display()
-    );
+    println!("[ok] config resolved");
     ok += 1;
 
-    // Adapter scan
-    let adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
     match adapter.scan() {
         Ok(items) => {
-            println!("[ok] scan: found {} items", items.len());
+            println!("[ok] scan: {} items", items.len());
             ok += 1;
         }
         Err(e) => {
@@ -37,15 +30,12 @@ pub fn handle_doctor(_: Doctor, root: Option<PathBuf>) -> Result<(), AppError> {
         }
     }
 
-    // Lists
-    let lists = adapter.lists();
-    println!("[ok] lists: {} lists defined", lists.len());
+    println!("[ok] lists: {} defined", adapter.lists().len());
     ok += 1;
 
-    // Editor
     match ResolvedEditor::resolve() {
         Ok(editor) => {
-            println!("[ok] editor: resolved to '{}'", editor.program);
+            println!("[ok] editor: '{}'", editor.program);
             ok += 1;
         }
         Err(e) => {
@@ -55,7 +45,6 @@ pub fn handle_doctor(_: Doctor, root: Option<PathBuf>) -> Result<(), AppError> {
     }
 
     println!("summary: {ok} ok, {errors} error(s)");
-
     if errors > 0 {
         return Err(AppError::message(format!("doctor found {errors} error(s)")));
     }

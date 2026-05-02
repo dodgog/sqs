@@ -55,7 +55,7 @@ pub fn inspect(explicit_root: Option<PathBuf>) -> Result<ConfigInspection, AppEr
     let env_root = env_path("SQS_ROOT");
     let resolved = match resolve(explicit_root.clone()) {
         Ok(resolved) => Some(resolved),
-        Err(error) if error.to_string().starts_with("no sqs.toml found") => None,
+        Err(AppError::NoConfig(_)) => None,
         Err(error) => return Err(error),
     };
 
@@ -88,7 +88,7 @@ fn missing_root_error() -> AppError {
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "~/.config/sqs/config.toml".to_string());
 
-    AppError::message(format!(
+    AppError::NoConfig(format!(
         "no sqs.toml found; run `sqs init` or pass --root, set SQS_ROOT, or configure {location}\n\n{}",
         starter_config(config_path.as_deref())
     ))

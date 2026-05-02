@@ -41,6 +41,26 @@ impl MarkdownTodolistsAdapter {
         io::write_item_file(&self.root, ext_id, fm, body)
     }
 
+    fn validate_and_write(
+        &self,
+        ext_id: &str,
+        path: &std::path::Path,
+        content: &str,
+        original: &str,
+    ) -> Result<(), AppError> {
+        match parse_item_file(content) {
+            Ok((mut fm, body)) => {
+                fm.updated_at = Utc::now();
+                self.write_item_fm(ext_id, &fm, &body)?;
+                Ok(())
+            }
+            Err(e) => {
+                fs::write(path, original)?;
+                Err(AppError::message(format!("invalid file: {e}")))
+            }
+        }
+    }
+
     fn existing_ids(&self) -> HashSet<String> {
         self.scan()
             .unwrap_or_default()
@@ -119,9 +139,12 @@ impl Adapter for MarkdownTodolistsAdapter {
 
     fn reorder_items(&mut self, _list: &str, ordered_ids: &[String]) -> Result<(), AppError> {
         for (i, id) in ordered_ids.iter().enumerate() {
+            let new_order = i as f64;
             let (mut fm, body) = self.read_item(id)?;
-            fm.order = i as f64;
-            self.write_item_fm(id, &fm, &body)?;
+            if (fm.order - new_order).abs() > f64::EPSILON {
+                fm.order = new_order;
+                self.write_item_fm(id, &fm, &body)?;
+            }
         }
         Ok(())
     }
@@ -142,29 +165,16 @@ impl Adapter for MarkdownTodolistsAdapter {
         path: &std::path::Path,
         original_content: &str,
     ) -> Result<EditOutcome, AppError> {
-        let edited_content = fs::read_to_string(path)?;
-
-        if edited_content.trim().is_empty() {
+        let edited = fs::read_to_string(path)?;
+        if edited.trim().is_empty() {
             fs::write(path, original_content)?;
             return Err(AppError::message("file cannot be empty"));
         }
-
-        if edited_content == original_content {
+        if edited == original_content {
             return Ok(EditOutcome::Unchanged);
         }
-
-        // Validate the edited frontmatter
-        match parse_item_file(&edited_content) {
-            Ok((mut fm, body)) => {
-                fm.updated_at = Utc::now();
-                self.write_item_fm(ext_id, &fm, &body)?;
-                Ok(EditOutcome::Applied)
-            }
-            Err(e) => {
-                fs::write(path, original_content)?;
-                Err(AppError::message(format!("invalid file: {e}")))
-            }
-        }
+        self.validate_and_write(ext_id, path, &edited, original_content)?;
+        Ok(EditOutcome::Applied)
     }
 
     fn finalize_add_edit(
@@ -173,26 +183,14 @@ impl Adapter for MarkdownTodolistsAdapter {
         path: &std::path::Path,
         original_content: &str,
     ) -> Result<(), AppError> {
-        let edited_content = fs::read_to_string(path)?;
-
-        if edited_content.trim().is_empty() {
+        let edited = fs::read_to_string(path)?;
+        if edited.trim().is_empty() {
             fs::write(path, original_content)?;
             return Err(AppError::message("file cannot be empty"));
         }
-
-        if edited_content != original_content {
-            match parse_item_file(&edited_content) {
-                Ok((mut fm, body)) => {
-                    fm.updated_at = Utc::now();
-                    self.write_item_fm(ext_id, &fm, &body)?;
-                }
-                Err(e) => {
-                    fs::write(path, original_content)?;
-                    return Err(AppError::message(format!("invalid file: {e}")));
-                }
-            }
+        if edited != original_content {
+            self.validate_and_write(ext_id, path, &edited, original_content)?;
         }
-
         Ok(())
     }
 }

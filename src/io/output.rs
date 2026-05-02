@@ -1,14 +1,9 @@
-use crate::storage::config::{ConfigInspection, ResolvedConfig};
+use crate::storage::config::ConfigInspection;
 use dialoguer::console::style;
 use std::path::Path;
 
 pub fn print_info(message: &str) {
     println!("{}", style(message).cyan());
-}
-
-pub fn print_config(config: &ResolvedConfig) {
-    println!("tasks_root = {}", config.tasks_root.display());
-    println!("state_dir = {}", config.state_dir.display());
 }
 
 pub fn print_config_inspection(inspection: &ConfigInspection) {
@@ -39,7 +34,7 @@ pub fn print_config_inspection(inspection: &ConfigInspection) {
     match &inspection.resolved {
         Some(config) => {
             println!();
-            print_config(config);
+            println!("tasks_root = {}", config.tasks_root.display());
         }
         None => {
             println!("tasks_root = <unset>");

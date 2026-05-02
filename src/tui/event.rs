@@ -94,31 +94,21 @@ fn handle_normal_key(app: &mut TuiApp, key: KeyEvent) -> Result<SideEffect, AppE
             app.update_search_results();
         }
 
-        // Add task: O/i=insert before cursor, o/a=append after cursor
-        KeyCode::Char('O') | KeyCode::Char('i') => {
+        // Add: O/i before cursor, o/a after cursor
+        KeyCode::Char('O') | KeyCode::Char('i') | KeyCode::Char('o') | KeyCode::Char('a') => {
             let list = match app.active_filter() {
                 crate::tui::app_state::ListFilter::Single(name) => name,
                 crate::tui::app_state::ListFilter::All => app
                     .selected_item()
                     .map(|i| i.list.clone())
-                    .unwrap_or_else(|| "inbox".to_string()),
+                    .unwrap_or_else(|| crate::adapter::DEFAULT_LIST.to_string()),
             };
-            let insert_at = app.task_list_state.selected().unwrap_or(0);
-            app.mode = Mode::AddForm {
-                title: String::new(),
-                list,
-                insert_at,
+            let before = matches!(key.code, KeyCode::Char('O') | KeyCode::Char('i'));
+            let insert_at = if before {
+                app.task_list_state.selected().unwrap_or(0)
+            } else {
+                app.task_list_state.selected().map(|i| i + 1).unwrap_or(0)
             };
-        }
-        KeyCode::Char('o') | KeyCode::Char('a') => {
-            let list = match app.active_filter() {
-                crate::tui::app_state::ListFilter::Single(name) => name,
-                crate::tui::app_state::ListFilter::All => app
-                    .selected_item()
-                    .map(|i| i.list.clone())
-                    .unwrap_or_else(|| "inbox".to_string()),
-            };
-            let insert_at = app.task_list_state.selected().map(|i| i + 1).unwrap_or(0);
             app.mode = Mode::AddForm {
                 title: String::new(),
                 list,

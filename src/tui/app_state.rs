@@ -197,15 +197,7 @@ impl TuiApp {
         match self.active_filter() {
             ListFilter::Single(ref name) => self.items.iter().filter(|i| i.list == *name).collect(),
             ListFilter::All => {
-                // Order items by sidebar list order, then by order within list
-                let list_order: Vec<&str> = self
-                    .sidebar_entries
-                    .iter()
-                    .filter_map(|e| match e {
-                        SidebarEntry::List(n) => Some(n.as_str()),
-                        SidebarEntry::All => None,
-                    })
-                    .collect();
+                let list_order = self.list_names();
                 let mut sorted: Vec<&Item> = self.items.iter().collect();
                 sorted.sort_by(|a, b| {
                     let a_pos = list_order
@@ -247,14 +239,7 @@ impl TuiApp {
     }
 
     pub fn select_queue_by_index(&mut self, index: usize) {
-        let selectable: Vec<usize> = self
-            .sidebar_entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| matches!(e, SidebarEntry::List(_) | SidebarEntry::All))
-            .map(|(i, _)| i)
-            .collect();
-        if let Some(&sidebar_idx) = selectable.get(index) {
+        if let Some(sidebar_idx) = (index < self.sidebar_entries.len()).then_some(index) {
             self.active_sidebar_index = sidebar_idx;
             self.select_first_task();
         }
@@ -330,13 +315,6 @@ impl TuiApp {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn shift_visual_anchor(&mut self, delta: i32) {
-        if let Mode::Visual { anchor } = &mut self.mode {
-            *anchor = (*anchor as i32 + delta).max(0) as usize;
-        }
-    }
-
     pub fn visual_selected_task_ids(&self) -> Vec<String> {
         if let Some((start, end)) = self.visual_selection_range() {
             let items = self.current_items();
@@ -348,37 +326,26 @@ impl TuiApp {
         }
     }
 
-    #[allow(dead_code)]
-    /// Find the list name after `list` in sidebar order.
-    pub fn next_list_for(&self, list: &str) -> Option<String> {
-        let list_entries: Vec<&str> = self
-            .sidebar_entries
+    pub fn list_names(&self) -> Vec<&str> {
+        self.sidebar_entries
             .iter()
             .filter_map(|e| match e {
                 SidebarEntry::List(n) => Some(n.as_str()),
                 SidebarEntry::All => None,
             })
-            .collect();
-        let pos = list_entries.iter().position(|n| *n == list)?;
-        list_entries.get(pos + 1).map(|s| s.to_string())
+            .collect()
     }
 
-    /// Find the list name before `list` in sidebar order.
+    pub fn next_list_for(&self, list: &str) -> Option<String> {
+        let names = self.list_names();
+        let pos = names.iter().position(|n| *n == list)?;
+        names.get(pos + 1).map(|s| s.to_string())
+    }
+
     pub fn prev_list_for(&self, list: &str) -> Option<String> {
-        let list_entries: Vec<&str> = self
-            .sidebar_entries
-            .iter()
-            .filter_map(|e| match e {
-                SidebarEntry::List(n) => Some(n.as_str()),
-                SidebarEntry::All => None,
-            })
-            .collect();
-        let pos = list_entries.iter().position(|n| *n == list)?;
-        if pos == 0 {
-            None
-        } else {
-            list_entries.get(pos - 1).map(|s| s.to_string())
-        }
+        let names = self.list_names();
+        let pos = names.iter().position(|n| *n == list)?;
+        (pos > 0).then(|| names[pos - 1].to_string())
     }
 
     /// Swap the current sidebar entry with the one below it and persist.
@@ -407,64 +374,58 @@ impl TuiApp {
         self.persist_list_order();
     }
 
-    /// Move a visual selection of sidebar entries down by one.
     pub fn swap_list_block_down(&mut self) {
-        let (start, end) = if let Mode::Visual { anchor } = &self.mode {
-            let cursor = self.active_sidebar_index;
-            ((*anchor).min(cursor), (*anchor).max(cursor))
+        self.swap_list_block(true);
+    }
+    pub fn swap_list_block_up(&mut self) {
+        self.swap_list_block(false);
+    }
+
+    fn swap_list_block(&mut self, down: bool) {
+        let (start, end) = self.sidebar_selection_range();
+        if down {
+            let len = self.sidebar_entries.len();
+            if end + 1 >= len || matches!(self.sidebar_entries[end + 1], SidebarEntry::All) {
+                return;
+            }
+            let item = self.sidebar_entries.remove(end + 1);
+            self.sidebar_entries.insert(start, item);
+            self.active_sidebar_index = end + 1;
+            if let Mode::Visual { anchor } = &mut self.mode {
+                *anchor = start + 1;
+            }
         } else {
-            let idx = self.active_sidebar_index;
-            (idx, idx)
-        };
-        let len = self.sidebar_entries.len();
-        if end + 1 >= len || matches!(self.sidebar_entries[end + 1], SidebarEntry::All) {
-            return;
-        }
-        // Move the entry below the block to just above it
-        let below = self.sidebar_entries.remove(end + 1);
-        self.sidebar_entries.insert(start, below);
-        // New selection: (start+1, end+1)
-        self.active_sidebar_index = end + 1;
-        if let Mode::Visual { anchor } = &mut self.mode {
-            *anchor = start + 1;
+            if start == 0 {
+                return;
+            }
+            let item = self.sidebar_entries.remove(start - 1);
+            self.sidebar_entries.insert(end, item);
+            self.active_sidebar_index = end - 1;
+            if let Mode::Visual { anchor } = &mut self.mode {
+                *anchor = start - 1;
+            }
         }
         self.persist_list_order();
     }
 
-    /// Move a visual selection of sidebar entries up by one.
-    pub fn swap_list_block_up(&mut self) {
-        let (start, end) = if let Mode::Visual { anchor } = &self.mode {
+    fn sidebar_selection_range(&self) -> (usize, usize) {
+        if let Mode::Visual { anchor } = &self.mode {
             let cursor = self.active_sidebar_index;
             ((*anchor).min(cursor), (*anchor).max(cursor))
         } else {
-            let idx = self.active_sidebar_index;
-            (idx, idx)
-        };
-        if start == 0 {
-            return;
+            (self.active_sidebar_index, self.active_sidebar_index)
         }
-        let above = self.sidebar_entries.remove(start - 1);
-        self.sidebar_entries.insert(end, above);
-        // New selection: (start-1, end-1)
-        self.active_sidebar_index = end - 1;
-        if let Mode::Visual { anchor } = &mut self.mode {
-            *anchor = start - 1;
-        }
-        self.persist_list_order();
     }
 
     fn persist_list_order(&mut self) {
         let lists: Vec<ListDef> = self
-            .sidebar_entries
+            .list_names()
             .iter()
             .enumerate()
-            .filter_map(|(i, e)| match e {
-                SidebarEntry::List(name) => Some(ListDef {
-                    name: name.clone(),
-                    display: name.clone(),
-                    order: i as f64,
-                }),
-                SidebarEntry::All => None,
+            .map(|(i, name)| ListDef {
+                name: name.to_string(),
+                display: name.to_string(),
+                order: i as f64,
             })
             .collect();
         let _ = self.adapter.set_lists(&lists);
@@ -479,15 +440,10 @@ impl TuiApp {
         else {
             return;
         };
-        let q = query.to_lowercase();
         *results = self
             .items
             .iter()
-            .filter(|i| {
-                i.title.to_lowercase().contains(&q)
-                    || i.ext_id.to_lowercase().contains(&q)
-                    || i.body.to_lowercase().contains(&q)
-            })
+            .filter(|i| i.matches_query(query))
             .map(|i| (i.ext_id.clone(), i.list.clone()))
             .collect();
         if results.is_empty() {

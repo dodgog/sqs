@@ -1,9 +1,8 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 
 use clap::Parser;
 
 use crate::adapter::{Adapter, EditOutcome};
-use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
 use crate::io::output;
@@ -15,22 +14,14 @@ pub struct Edit {
 }
 
 pub fn handle_edit(Edit { task }: Edit, root: Option<PathBuf>) -> Result<(), AppError> {
-    let resolved = helpers::resolve_config(root)?;
-    let mut adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
+    let mut adapter = helpers::build_adapter(root)?;
 
     let query = task.ok_or_else(|| AppError::usage("item ID required"))?;
     let item = helpers::resolve_item(&adapter, &query)?;
     let path = adapter.editor_path(&item.ext_id)?;
 
     let original_content = fs::read_to_string(&path)?;
-    let editor = helpers::resolve_editor()?;
-    let status = Command::new(&editor.program)
-        .args(&editor.args)
-        .arg(&path)
-        .status()?;
-    if !status.success() {
-        return Err(AppError::message("editor command failed"));
-    }
+    helpers::resolve_editor()?.open_file(&path)?;
 
     match adapter.apply_edit(&item.ext_id, &path, &original_content)? {
         EditOutcome::Unchanged => {

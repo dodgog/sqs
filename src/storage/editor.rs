@@ -1,8 +1,4 @@
-use std::{
-    env,
-    ffi::OsStr,
-    path::{Path, PathBuf},
-};
+use std::{env, path::Path};
 
 use crate::app::app_error::AppError;
 
@@ -35,49 +31,16 @@ impl ResolvedEditor {
         })
     }
 
-    pub fn executable_path(&self) -> Option<PathBuf> {
-        find_executable(&self.program)
+    pub fn open_file(&self, path: &Path) -> Result<(), AppError> {
+        let status = std::process::Command::new(&self.program)
+            .args(&self.args)
+            .arg(path)
+            .status()?;
+        if !status.success() {
+            return Err(AppError::message("editor command failed"));
+        }
+        Ok(())
     }
-}
-
-fn find_executable(program: &str) -> Option<PathBuf> {
-    let program_path = Path::new(program);
-    if program_path.components().count() > 1 {
-        return is_executable(program_path).then(|| program_path.to_path_buf());
-    }
-
-    let path = env::var_os("PATH")?;
-    env::split_paths(&path)
-        .map(|dir| dir.join(program))
-        .find(|candidate| is_executable(candidate))
-}
-
-fn is_executable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        path.metadata()
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
-
-pub fn format_program_path(path: &Path) -> String {
-    path.as_os_str().to_string_lossy().into_owned()
-}
-
-pub fn format_program_name(program: impl AsRef<OsStr>) -> String {
-    program.as_ref().to_string_lossy().into_owned()
 }
 
 #[cfg(test)]

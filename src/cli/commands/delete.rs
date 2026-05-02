@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use crate::adapter::Adapter;
-use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
 use crate::io::{input, output};
@@ -21,8 +20,7 @@ pub fn handle_delete(
     Delete { task, interactive }: Delete,
     root: Option<PathBuf>,
 ) -> Result<(), AppError> {
-    let resolved = helpers::resolve_config(root)?;
-    let mut adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
+    let mut adapter = helpers::build_adapter(root)?;
 
     let query = task.ok_or_else(|| AppError::usage("item ID required"))?;
     let item = helpers::resolve_item(&adapter, &query)?;

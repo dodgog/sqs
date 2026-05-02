@@ -143,16 +143,14 @@ pub fn read_lists_yaml(root: &Path) -> Result<Vec<ListDef>, AppError> {
         return Ok(default_lists());
     }
     let content = fs::read_to_string(&path)?;
-    let lists: Vec<ListDefYaml> = serde_yaml::from_str(&content)
+    let lists: Vec<ListDef> = serde_yaml::from_str(&content)
         .map_err(|e| AppError::message(format!("invalid lists.yaml: {e}")))?;
-    Ok(lists.into_iter().map(|l| l.into()).collect())
+    Ok(lists)
 }
 
-/// Write lists.yaml to the adapter root.
 pub fn write_lists_yaml(root: &Path, lists: &[ListDef]) -> Result<(), AppError> {
     let path = root.join("lists.yaml");
-    let yaml_lists: Vec<ListDefYaml> = lists.iter().map(|l| l.into()).collect();
-    let content = serde_yaml::to_string(&yaml_lists)
+    let content = serde_yaml::to_string(&lists)
         .map_err(|e| AppError::message(format!("failed to serialize lists.yaml: {e}")))?;
     fs::write(path, content)?;
     Ok(())
@@ -194,33 +192,6 @@ pub fn default_lists() -> Vec<ListDef> {
             order: 4.0,
         },
     ]
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct ListDefYaml {
-    name: String,
-    display: String,
-    order: f64,
-}
-
-impl From<ListDefYaml> for ListDef {
-    fn from(l: ListDefYaml) -> Self {
-        ListDef {
-            name: l.name,
-            display: l.display,
-            order: l.order,
-        }
-    }
-}
-
-impl From<&ListDef> for ListDefYaml {
-    fn from(l: &ListDef) -> Self {
-        ListDefYaml {
-            name: l.name.clone(),
-            display: l.display.clone(),
-            order: l.order,
-        }
-    }
 }
 
 #[cfg(test)]

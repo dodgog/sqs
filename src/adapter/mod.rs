@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+pub const DEFAULT_LIST: &str = "inbox";
+
 use crate::app::app_error::AppError;
 
 #[derive(Debug, Clone)]
@@ -12,11 +14,20 @@ pub struct Item {
     pub content_hash: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ListDef {
     pub name: String,
     pub display: String,
     pub order: f64,
+}
+
+impl Item {
+    pub fn matches_query(&self, query: &str) -> bool {
+        let q = query.to_lowercase();
+        self.title.to_lowercase().contains(&q)
+            || self.ext_id.to_lowercase().contains(&q)
+            || self.body.to_lowercase().contains(&q)
+    }
 }
 
 /// Result of applying an edit: either the item was unchanged, or it was updated.

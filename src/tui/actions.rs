@@ -1,4 +1,3 @@
-use crate::adapters::markdown_todolists::identity;
 use crate::app::app_error::AppError;
 
 use super::app_state::{ListFilter, Mode, TuiApp};
@@ -251,62 +250,37 @@ pub fn reorder_up(app: &mut TuiApp) -> Result<SideEffect, AppError> {
     Ok(SideEffect::None)
 }
 
-/// Move selected item(s) to the top of their list.
 pub fn move_to_top(app: &mut TuiApp) -> Result<SideEffect, AppError> {
-    let (start, end) = selection_range(app);
-    let items = app.current_items();
-    if items.is_empty() || start == 0 {
-        return Ok(SideEffect::None);
-    }
-
-    let sel_list = items[start].list.clone();
-    let sel_ids: Vec<String> = (start..=end)
-        .filter_map(|i| items.get(i).map(|it| it.ext_id.clone()))
-        .collect();
-
-    let mut order: Vec<String> = items
-        .iter()
-        .filter(|it| it.list == sel_list)
-        .map(|it| it.ext_id.clone())
-        .collect();
-
-    // Remove selected, prepend them
-    order.retain(|id| !sel_ids.contains(id));
-    for (i, id) in sel_ids.iter().enumerate() {
-        order.insert(i, id.clone());
-    }
-
-    let was_visual = matches!(app.mode, Mode::Visual { .. });
-    app.adapter.reorder_items(&sel_list, &order)?;
-    app.refresh()?;
-    select_items_by_id(app, &sel_ids, was_visual);
-    Ok(SideEffect::None)
+    move_to_edge(app, true)
 }
 
-/// Move selected item(s) to the bottom of their list.
 pub fn move_to_bottom(app: &mut TuiApp) -> Result<SideEffect, AppError> {
+    move_to_edge(app, false)
+}
+
+fn move_to_edge(app: &mut TuiApp, to_top: bool) -> Result<SideEffect, AppError> {
     let (start, end) = selection_range(app);
     let items = app.current_items();
     if items.is_empty() {
         return Ok(SideEffect::None);
     }
-
     let sel_list = items[start].list.clone();
     let sel_ids: Vec<String> = (start..=end)
         .filter_map(|i| items.get(i).map(|it| it.ext_id.clone()))
         .collect();
-
     let mut order: Vec<String> = items
         .iter()
         .filter(|it| it.list == sel_list)
         .map(|it| it.ext_id.clone())
         .collect();
-
     order.retain(|id| !sel_ids.contains(id));
-    for id in &sel_ids {
-        order.push(id.clone());
+    if to_top {
+        for (i, id) in sel_ids.iter().enumerate() {
+            order.insert(i, id.clone());
+        }
+    } else {
+        order.extend(sel_ids.iter().cloned());
     }
-
     let was_visual = matches!(app.mode, Mode::Visual { .. });
     app.adapter.reorder_items(&sel_list, &order)?;
     app.refresh()?;
@@ -314,36 +288,36 @@ pub fn move_to_bottom(app: &mut TuiApp) -> Result<SideEffect, AppError> {
     Ok(SideEffect::None)
 }
 
-/// Send items to the next list, follow them.
 pub fn send_to_next_list(app: &mut TuiApp, ids: &[String]) -> Result<SideEffect, AppError> {
-    if ids.is_empty() {
-        return Ok(SideEffect::None);
-    }
-    let item = app.adapter.find_item(&ids[0])?;
-    let Some(target) = app.next_list_for(&item.list) else {
-        return Ok(SideEffect::None);
-    };
-    let was_visual = matches!(app.mode, Mode::Visual { .. });
-    let id_list: Vec<String> = ids.to_vec();
-    for id in ids {
-        app.adapter.move_item(id, &target)?;
-    }
-    app.refresh()?;
-    if !matches!(app.active_filter(), ListFilter::All) {
-        app.jump_to_list(&target);
-    }
-    select_items_by_id(app, &id_list, was_visual);
-    app.set_status(format!("Sent {} item(s) to {target}", id_list.len()));
-    Ok(SideEffect::None)
+    send_to_adjacent(app, ids, true)
 }
 
-/// Send items to the previous list, follow them.
 pub fn send_to_prev_list(app: &mut TuiApp, ids: &[String]) -> Result<SideEffect, AppError> {
+    send_to_adjacent(app, ids, false)
+}
+
+fn send_to_adjacent(
+    app: &mut TuiApp,
+    ids: &[String],
+    forward: bool,
+) -> Result<SideEffect, AppError> {
     if ids.is_empty() {
         return Ok(SideEffect::None);
     }
-    let item = app.adapter.find_item(&ids[0])?;
-    let Some(target) = app.prev_list_for(&item.list) else {
+    let item_list = app
+        .items
+        .iter()
+        .find(|i| i.ext_id == ids[0])
+        .map(|i| i.list.clone());
+    let Some(item_list) = item_list else {
+        return Ok(SideEffect::None);
+    };
+    let target = if forward {
+        app.next_list_for(&item_list)
+    } else {
+        app.prev_list_for(&item_list)
+    };
+    let Some(target) = target else {
         return Ok(SideEffect::None);
     };
     let was_visual = matches!(app.mode, Mode::Visual { .. });
@@ -419,13 +393,9 @@ pub fn submit_add_form(app: &mut TuiApp) -> Result<SideEffect, AppError> {
         return Ok(SideEffect::None);
     }
 
-    let existing = app.items.iter().map(|i| i.ext_id.clone()).collect();
-    let id = identity::generate_id(&existing);
-    let new_id = id.clone();
     let order = insert_at as f64;
-
-    app.adapter
-        .create_item(Some(&id), &list, &title, "", order)?;
+    let (new_item, _) = app.adapter.create_item(None, &list, &title, "", order)?;
+    let new_id = new_item.ext_id.clone();
     app.refresh()?;
 
     // Reorder to place at correct position

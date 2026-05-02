@@ -16,12 +16,16 @@ pub enum AppError {
     InvalidTaskFile { path: String, reason: String },
     #[error("path traversal attempt: {0}")]
     PathTraversalAttempt(String),
+    #[error("{0}")]
+    NoConfig(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("yaml error: {0}")]
     Yaml(#[from] serde_yaml::Error),
     #[error("dialoguer error: {0}")]
     Dialoguer(#[from] dialoguer::Error),
+    #[error("cache error: {0}")]
+    Cache(#[from] rusqlite::Error),
 }
 
 impl AppError {
@@ -65,7 +69,9 @@ impl AppError {
             | Self::PathTraversalAttempt(_)
             | Self::Io(_)
             | Self::Yaml(_)
-            | Self::Dialoguer(_) => 1,
+            | Self::Dialoguer(_)
+            | Self::Cache(_)
+            | Self::NoConfig(_) => 1,
         }
     }
 }

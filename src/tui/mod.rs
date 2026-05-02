@@ -6,7 +6,6 @@ mod widgets;
 
 use std::io;
 use std::io::Write as _;
-use std::process::Command;
 use std::time::Duration;
 
 use crossterm::{
@@ -124,19 +123,8 @@ fn suspend_for_editor(
 fn run_editor(app: &mut TuiApp, task_id: &str) -> Result<(), AppError> {
     let path = app.adapter.editor_path(task_id)?;
     let original_content = std::fs::read_to_string(&path)?;
-
-    let editor = ResolvedEditor::resolve()?;
     io::stdout().flush().ok();
-
-    let status = Command::new(&editor.program)
-        .args(&editor.args)
-        .arg(&path)
-        .status()?;
-
-    if !status.success() {
-        return Err(AppError::message("editor command failed"));
-    }
-
+    ResolvedEditor::resolve()?.open_file(&path)?;
     app.adapter.apply_edit(task_id, &path, &original_content)?;
     Ok(())
 }

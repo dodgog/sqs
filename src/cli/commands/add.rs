@@ -1,9 +1,8 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 
 use clap::Parser;
 
 use crate::adapter::Adapter;
-use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
 use crate::io::{input, output};
@@ -36,15 +35,14 @@ pub fn handle_add(
     }: Add,
     root: Option<PathBuf>,
 ) -> Result<(), AppError> {
-    let resolved = helpers::resolve_config(root)?;
-    let mut adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
+    let mut adapter = helpers::build_adapter(root)?;
 
     let title = match title {
         Some(title) => title,
         None => input::prompt_input("Title:")?,
     };
 
-    let list = list.unwrap_or_else(|| "inbox".to_string());
+    let list = list.unwrap_or_else(|| crate::adapter::DEFAULT_LIST.to_string());
     let has_content = content.is_some();
     let body = content.unwrap_or_default();
 
@@ -52,15 +50,7 @@ pub fn handle_add(
 
     if !no_edit && !has_content {
         let original_content = fs::read_to_string(&path)?;
-        let editor = helpers::resolve_editor()?;
-        let status = Command::new(&editor.program)
-            .args(&editor.args)
-            .arg(&path)
-            .status()?;
-        if !status.success() {
-            return Err(AppError::message("editor command failed"));
-        }
-
+        helpers::resolve_editor()?.open_file(&path)?;
         adapter.finalize_add_edit(&item.ext_id, &path, &original_content)?;
     }
 

@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use crate::adapter::Adapter;
-use crate::adapters::markdown_todolists::MarkdownTodolistsAdapter;
 use crate::app::app_error::AppError;
 use crate::cli::commands::helpers;
 
@@ -14,8 +13,7 @@ pub struct Show {
 }
 
 pub fn handle_show(Show { task }: Show, root: Option<PathBuf>) -> Result<(), AppError> {
-    let resolved = helpers::resolve_config(root)?;
-    let adapter = MarkdownTodolistsAdapter::new(resolved.tasks_root.clone());
+    let adapter = helpers::build_adapter(root)?;
 
     let query = task.ok_or_else(|| AppError::usage("item ID required"))?;
     let item = helpers::resolve_item(&adapter, &query)?;

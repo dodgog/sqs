@@ -4,6 +4,13 @@ use crate::adapter::{Adapter, Item};
 use crate::app::app_error::AppError;
 use crate::storage::{config, config::ResolvedConfig, editor::ResolvedEditor};
 
+pub fn build_adapter(
+    root: Option<PathBuf>,
+) -> Result<crate::adapters::markdown_todolists::MarkdownTodolistsAdapter, AppError> {
+    let resolved = resolve_config(root)?;
+    Ok(crate::adapters::markdown_todolists::MarkdownTodolistsAdapter::new(resolved.tasks_root))
+}
+
 pub fn resolve_editor() -> Result<ResolvedEditor, AppError> {
     ResolvedEditor::resolve()
 }
