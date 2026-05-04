@@ -172,7 +172,6 @@ fn absolutize_from(base_dir: &Path, value: PathBuf) -> PathBuf {
 mod tests {
     use super::*;
     use crate::test_support::LockedEnv;
-    use std::fs;
     use tempfile::TempDir;
 
     #[test]

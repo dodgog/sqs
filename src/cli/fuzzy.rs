@@ -472,7 +472,7 @@ mod tests {
         for spec in get_command_specs() {
             let subcommand = clap_cmd
                 .find_subcommand(&spec.canonical)
-                .expect(&format!("Subcommand {} not found in Clap", spec.canonical));
+                .unwrap_or_else(|| panic!("Subcommand {} not found in Clap", spec.canonical));
 
             let clap_aliases: Vec<&str> = subcommand.get_visible_aliases().collect();
             let fuzzy_aliases: Vec<&str> = spec.aliases.iter().map(|s| s.as_str()).collect();
