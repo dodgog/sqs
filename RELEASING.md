@@ -23,10 +23,28 @@ rustup default stable
 This downloads the stable Rust toolchain into `~/.rustup/toolchains/`. After
 that `cargo`, `rustc`, `rustfmt`, `clippy` all work.
 
-## Before releasing
+## Release notes
 
-Update the **`[Unreleased]`** section of `CHANGELOG.md` so the GitHub Release
-notes reflect what shipped. The release script will not do this for you.
+Three ways to provide the notes — pick one per release:
+
+| Mode | Flag | Behavior |
+|---|---|---|
+| **Classic** | *(default — no flag)* | Use whatever's already under `## [Unreleased]` in `CHANGELOG.md`. |
+| **Editor** | `--editor` / `-e` | Open `$EDITOR` with a template; the saved content is written under `## [Unreleased]`. |
+| **Inline** | `--message "..."` / `-m "..."` | Use the provided string; written under `## [Unreleased]`. |
+
+In all three cases the script:
+
+- **refuses to release** if the notes are empty / whitespace-only,
+- **prints the notes** in the confirmation prompt,
+- relies on `release.toml`'s `pre-release-replacements` to rename
+  `[Unreleased]` → `[X.Y.Z] - <date>` during the release commit. After the
+  tag is pushed, cargo-dist's `dist host` step uses that same `[X.Y.Z]`
+  section as the GitHub Release body.
+
+> **Note:** `--editor` and `--message` modify `CHANGELOG.md` *before*
+> running cargo-release. If you abort or the dry-run fails after that
+> point, run `git checkout CHANGELOG.md` to discard the staged notes.
 
 ## Cut a release
 
@@ -41,16 +59,23 @@ scripts/release.sh 0.5.0        # explicit version
 
 # Execute for real
 scripts/release.sh patch --execute
+
+# With on-the-spot release notes
+scripts/release.sh patch --editor --execute
+scripts/release.sh patch --message "fix: bumped flake build" --execute
 ```
 
 The script will:
 
-1. Run preflight: `cargo fmt --check`, `cargo clippy -- -D warnings`,
+1. Verify `CHANGELOG.md` `[Unreleased]` is non-empty and display it.
+2. Run preflight: `cargo fmt --check`, `cargo clippy -- -D warnings`,
    `cargo test`, `dist plan`. Skip with `--skip-checks` if needed.
-2. Hand off to `cargo release`, which (per `release.toml`):
+3. Hand off to `cargo release`, which (per `release.toml`):
    - Bumps the version in `Cargo.toml` and `Cargo.lock`.
    - Bumps the `version = "..."` line in `flake.nix` via
      `pre-release-replacements`.
+   - Renames `## [Unreleased]` to `## [Unreleased]\n\n## [X.Y.Z] - <date>`
+     in `CHANGELOG.md` (also a `pre-release-replacements` rule).
    - Commits `chore(release): X.Y.Z`.
    - Tags `vX.Y.Z` and pushes commit + tag to `main`.
 

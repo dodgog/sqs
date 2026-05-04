@@ -9,6 +9,7 @@ The format is based on Keep a Changelog and this project uses SemVer tags (`vX.Y
 ### Changed
 
 - `release.toml` auto-promotes the `[Unreleased]` CHANGELOG block on each release; cargo-dist uses the matching `[X.Y.Z]` section as the GitHub Release body.
+- `scripts/release.sh` now reads `CHANGELOG.md` and prints the upcoming release notes in the confirmation prompt. Refuses to release when no notes are available. Two new flags supply notes inline: `--editor` opens `$EDITOR`, `--message "..."` takes a string. Both inject the notes under `## [Unreleased]` before handing off to `cargo-release`.
 - `dist-workspace.toml` and `release.yml` pinned to cargo-dist `0.30.2` to match the version available in the local nix-darwin flake.
 - `RELEASING.md` rewritten: prerequisites now point at the system flake's `pkgs.rustup` / `pkgs.cargo-release` / `pkgs.cargo-dist` (no per-project dev shell).
 
