@@ -19,7 +19,7 @@
     packages = forAllSystems (system: {
       default = (pkgsFor system).rustPlatform.buildRustPackage {
         pname = "sqs";
-        version = "0.3.3";
+        version = "0.3.4";
         src = self;
         cargoLock.lockFile = ./Cargo.lock;
       };

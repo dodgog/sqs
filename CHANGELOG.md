@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project uses SemVer tags (`vX.Y
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-05-05
+
 ### Changed
 
 - `release.toml` auto-promotes the `[Unreleased]` CHANGELOG block on each release; cargo-dist uses the matching `[X.Y.Z]` section as the GitHub Release body.
