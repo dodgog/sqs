@@ -13,7 +13,7 @@ replace = 'version = "{{version}}"'
 
 [[pre-release-replacements]]
 file = "CHANGELOG.md"
-search = "## \\[Unreleased\\]"
+search = "(?m)^## \\[Unreleased\\]$"
 replace = """
 ## [Unreleased]
 
