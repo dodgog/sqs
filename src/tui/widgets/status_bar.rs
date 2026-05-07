@@ -6,15 +6,19 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use crate::tui::app_state::{Mode, TuiApp};
+use crate::tui::app_state::{DeleteScope, Mode, TuiApp};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp) {
     let line = match &app.mode {
         Mode::Normal => normal_line(app, area.width),
         Mode::Visual { .. } => visual_line(),
-        Mode::AddForm { .. } | Mode::Search { .. } => return,
-        Mode::ConfirmDelete { task_id, .. } => confirm_delete_line(task_id),
-        Mode::MoveTarget => move_target_line(),
+        Mode::AddForm { .. }
+        | Mode::AddSublist { .. }
+        | Mode::Search { .. }
+        | Mode::Find { .. }
+        | Mode::TagPicker { .. } => return,
+        Mode::ConfirmDelete { scope } => confirm_delete_line(scope),
+        Mode::CarryToList { selected_ids, .. } => carry_to_list_line(selected_ids.len()),
     };
 
     let bar = Paragraph::new(line);
@@ -30,21 +34,32 @@ fn normal_line(app: &TuiApp, area_width: u16) -> Line<'static> {
         ]);
     }
 
+    let badge_label = if app.tag_filter_active() {
+        "Normal*"
+    } else {
+        "Normal"
+    };
     let mut spans = vec![
-        mode_badge("Normal"),
+        mode_badge(badge_label),
         Span::raw(" "),
         hint("j/k"),
         Span::raw(":nav "),
         hint("J/K"),
         Span::raw(":reorder "),
-        hint("</>"),
-        Span::raw(":list "),
         hint("v"),
         Span::raw(":select "),
         hint("a"),
         Span::raw(":add "),
         hint("m"),
         Span::raw(":move "),
+        hint("f"),
+        Span::raw(":find "),
+        hint("/"),
+        Span::raw(":search "),
+        hint("t"),
+        Span::raw(":tag "),
+        hint("="),
+        Span::raw(":renorm "),
         hint("e"),
         Span::raw(":edit "),
         hint("x"),
@@ -53,13 +68,11 @@ fn normal_line(app: &TuiApp, area_width: u16) -> Line<'static> {
         Span::raw(":quit"),
     ];
 
-    // Progressively drop hint pairs from the right until the line fits
     while spans.len() > 2 {
         let total_width: usize = spans.iter().map(|s| s.width()).sum();
         if total_width <= area_width as usize {
             break;
         }
-        // Each hint is a pair: hint("key") + Span::raw(":label ")
         spans.pop();
         spans.pop();
     }
@@ -67,29 +80,38 @@ fn normal_line(app: &TuiApp, area_width: u16) -> Line<'static> {
     Line::from(spans)
 }
 
-fn confirm_delete_line(task_id: &str) -> Line<'static> {
+fn confirm_delete_line(scope: &DeleteScope) -> Line<'static> {
+    let prompt = match scope {
+        DeleteScope::Items(ids) if ids.len() == 1 => format!(" Delete item {}? ", ids[0]),
+        DeleteScope::Items(ids) => format!(" Delete {} item(s)? ", ids.len()),
+        DeleteScope::Lists(names) if names.len() == 1 => {
+            format!(" Delete list '{}'? (will move items if any) ", names[0])
+        }
+        DeleteScope::Lists(names) => {
+            format!(" Delete {} list(s)? (will move items if any) ", names.len())
+        }
+    };
     Line::from(vec![
         mode_badge("Delete"),
-        Span::raw(format!(" Delete {task_id}? ")),
+        Span::raw(prompt),
         hint("y"),
         Span::raw(":yes "),
         Span::raw("any other key:cancel"),
     ])
 }
 
-fn move_target_line() -> Line<'static> {
+fn carry_to_list_line(count: usize) -> Line<'static> {
     Line::from(vec![
-        mode_badge("Move"),
-        Span::raw(" Move to: "),
-        hint("i"),
-        Span::raw(":inbox "),
-        hint("n"),
-        Span::raw(":now "),
-        hint("x"),
-        Span::raw(":next "),
-        hint("l"),
-        Span::raw(":later "),
-        Span::raw("Esc:cancel"),
+        mode_badge("Carry"),
+        Span::raw(format!(" {count} item(s) │ ")),
+        hint("j/k"),
+        Span::raw(":nav "),
+        hint("L/Enter"),
+        Span::raw(":drop "),
+        hint("Esc"),
+        Span::raw(":cancel "),
+        Span::styled("* target ", Style::default().fg(Color::Yellow)),
+        Span::styled("o source", Style::default().fg(Color::Cyan)),
     ])
 }
 
@@ -103,6 +125,8 @@ fn visual_line() -> Line<'static> {
         Span::raw(":reorder "),
         hint("</>"),
         Span::raw(":send "),
+        hint("H"),
+        Span::raw(":carry "),
         hint("m"),
         Span::raw(":move "),
         hint("Esc"),

@@ -12,10 +12,18 @@ fn sqs_cmd() -> assert_cmd::Command {
 fn write_item(root: &std::path::Path, list: &str, id: &str, title: &str, body: &str) {
     let list_dir = root.join(list);
     std::fs::create_dir_all(&list_dir).expect("list dir should exist");
+    let order = match list {
+        "now" => 1001.0,
+        "next" => 2001.0,
+        "later" => 3001.0,
+        "inbox" => 4001.0,
+        "done" => 5001.0,
+        _ => 1001.0,
+    };
     std::fs::write(
         list_dir.join(format!("{id}.md")),
         format!(
-            "---\ntitle: {title}\nlist: {list}\norder: 0.0\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\n---\n{body}"
+            "---\ntitle: {title}\nlist: {list}\norder: {order}\ncreated_at: 2026-03-09T10:34:12Z\nupdated_at: 2026-03-09T10:34:12Z\n---\n{body}"
         ),
     )
     .expect("item file should be written");

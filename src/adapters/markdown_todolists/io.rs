@@ -32,11 +32,9 @@ pub fn scan_dir(root: &Path) -> Result<Vec<Item>, AppError> {
     }
 
     items.sort_by(|a, b| {
-        a.list.cmp(&b.list).then(
-            a.order
-                .partial_cmp(&b.order)
-                .unwrap_or(std::cmp::Ordering::Equal),
-        )
+        a.order
+            .partial_cmp(&b.order)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     Ok(items)
 }
@@ -165,33 +163,23 @@ pub fn ensure_list_dirs(root: &Path, lists: &[ListDef]) -> Result<(), AppError> 
 }
 
 pub fn default_lists() -> Vec<ListDef> {
-    vec![
-        ListDef {
-            name: "now".into(),
-            display: "Now".into(),
-            order: 0.0,
-        },
-        ListDef {
-            name: "next".into(),
-            display: "Next".into(),
-            order: 1.0,
-        },
-        ListDef {
-            name: "later".into(),
-            display: "Later".into(),
-            order: 2.0,
-        },
-        ListDef {
-            name: "inbox".into(),
-            display: "Inbox".into(),
-            order: 3.0,
-        },
-        ListDef {
-            name: "done".into(),
-            display: "Done".into(),
-            order: 4.0,
-        },
+    use crate::ordering::list_key_for_index;
+    [
+        ("now", "Now"),
+        ("next", "Next"),
+        ("later", "Later"),
+        ("inbox", "Inbox"),
+        ("done", "Done"),
     ]
+    .iter()
+    .enumerate()
+    .map(|(i, (name, display))| ListDef {
+        name: (*name).into(),
+        display: (*display).into(),
+        order: list_key_for_index(i),
+        tags: Vec::new(),
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -219,6 +207,7 @@ mod tests {
             title: "Test".into(),
             list: "now".into(),
             order: 1.0,
+            tags: Vec::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -241,6 +230,7 @@ mod tests {
             title: "Test".into(),
             list: "now".into(),
             order: 1.0,
+            tags: Vec::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

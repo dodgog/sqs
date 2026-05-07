@@ -8,6 +8,7 @@ pub mod helpers;
 pub mod init;
 pub mod list;
 pub mod move_cmd;
+pub mod renormalize;
 pub mod show;
 
 pub use add::Add;
@@ -19,4 +20,5 @@ pub use find::Find;
 pub use init::Init;
 pub use list::List;
 pub use move_cmd::Move;
+pub use renormalize::Renormalize;
 pub use show::Show;

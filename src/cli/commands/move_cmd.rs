@@ -28,7 +28,8 @@ pub fn handle_move(Move { task, list }: Move, root: Option<PathBuf>) -> Result<(
         return Ok(());
     }
 
-    adapter.move_item(&item.ext_id, &target)?;
+    let new_order = helpers::compute_bottom_key(&mut adapter, &target, true)?;
+    adapter.update_item_order(&item.ext_id, new_order)?;
     output::print_info(&format!("Moved {} to {target}", item.ext_id));
     Ok(())
 }

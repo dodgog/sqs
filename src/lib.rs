@@ -4,6 +4,7 @@ pub mod app;
 pub mod cache;
 pub mod cli;
 pub mod io;
+pub mod ordering;
 pub mod storage;
 #[cfg(test)]
 pub(crate) mod test_support;

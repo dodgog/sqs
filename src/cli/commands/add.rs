@@ -42,11 +42,12 @@ pub fn handle_add(
         None => input::prompt_input("Title:")?,
     };
 
-    let list = list.unwrap_or_else(|| crate::adapter::DEFAULT_LIST.to_string());
+    let target_list = list.unwrap_or_else(|| crate::adapter::DEFAULT_LIST.to_string());
     let has_content = content.is_some();
     let body = content.unwrap_or_default();
 
-    let (item, path) = adapter.create_item(id.as_deref(), &list, &title, &body, 0.0)?;
+    let order_key = helpers::compute_bottom_key(&mut adapter, &target_list, true)?;
+    let (item, path) = adapter.create_item(id.as_deref(), &title, &body, order_key)?;
 
     if !no_edit && !has_content {
         let original_content = fs::read_to_string(&path)?;

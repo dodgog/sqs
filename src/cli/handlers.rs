@@ -4,7 +4,7 @@ use crate::storage::config;
 
 use super::args::{Cli, Command};
 use super::commands::{
-    add, config as config_cmd, delete, doctor, edit, find, init, list, move_cmd, show,
+    add, config as config_cmd, delete, doctor, edit, find, init, list, move_cmd, renormalize, show,
 };
 
 pub fn handle(cli: Cli) -> Result<(), AppError> {
@@ -19,6 +19,7 @@ pub fn handle(cli: Cli) -> Result<(), AppError> {
         Some(Command::Find(command)) => find::handle_find(command, cli.root),
         Some(Command::Config(command)) => config_cmd::handle_config(command, cli.root),
         Some(Command::Doctor(command)) => doctor::handle_doctor(command, cli.root),
+        Some(Command::Renormalize(command)) => renormalize::handle_renormalize(command, cli.root),
         Some(Command::Tui) => handle_tui(cli.root),
         None => handle_default(cli.root),
     }

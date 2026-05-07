@@ -1,8 +1,8 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
-    text::Line,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
@@ -34,11 +34,25 @@ pub fn render(
         .title(Line::styled(title, Style::default().fg(Color::White)))
         .border_style(border_style);
 
-    let lines: Vec<Line> = item
-        .body
-        .lines()
-        .map(|l| Line::from(l.to_string()))
-        .collect();
+    let mut lines: Vec<Line> = Vec::new();
+    // Frontmatter header — same fields the YAML on disk holds.
+    lines.push(field("id", &item.ext_id));
+    lines.push(field("title", &item.title));
+    lines.push(field("list", &item.list));
+    lines.push(field("order", &format!("{}", item.order)));
+    if !item.tags.is_empty() {
+        lines.push(field("tags", &item.tags.join(" ")));
+    } else {
+        lines.push(field("tags", "(none)"));
+    }
+    lines.push(Line::from(Span::styled(
+        "──────────",
+        Style::default().fg(Color::Indexed(245)),
+    )));
+    lines.push(Line::from(""));
+    for body_line in item.body.lines() {
+        lines.push(Line::from(body_line.to_string()));
+    }
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -46,4 +60,16 @@ pub fn render(
         .scroll((scroll_offset, 0));
 
     frame.render_widget(paragraph, area);
+}
+
+fn field(label: &str, value: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("{label}: "),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(value.to_string()),
+    ])
 }

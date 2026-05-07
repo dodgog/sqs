@@ -2,28 +2,31 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use super::commands::{Add, Config, Delete, Doctor, Edit, Find, Init, List, Move, Show};
+use super::commands::{
+    Add, Config, Delete, Doctor, Edit, Find, Init, List, Move, Renormalize, Show,
+};
 
 const TOP_LEVEL_HELP: &str = "\
 Task Commands:
-  add     Add a task
-  list    List tasks
-  find    Find tasks by text
-  show    Show task details
+  add          Add a task
+  list         List tasks
+  find         Find tasks by text
+  show         Show task details
 
 Workflow Commands:
-  move    Move a task to a different list
-  delete  Delete a task permanently
-  edit    Edit a task
+  move         Move a task to a different list
+  delete       Delete a task permanently
+  edit         Edit a task
+  renormalize  Rebuild spaced order keys
 
 Setup Commands:
-  init    Initialize a new sqs project
-  config  Show effective configuration and setup help
-  doctor  Check configuration and task storage health
-  tui     Launch interactive TUI dashboard
+  init         Initialize a new sqs project
+  config       Show effective configuration and setup help
+  doctor       Check configuration and task storage health
+  tui          Launch interactive TUI dashboard
 
 Help:
-  help    Print this message or the help of the given subcommand(s)
+  help         Print this message or the help of the given subcommand(s)
 ";
 
 #[derive(Debug, Parser)]
@@ -54,6 +57,7 @@ pub enum Command {
     Find(Find),
     Config(Config),
     Doctor(Doctor),
+    Renormalize(Renormalize),
     /// Launch interactive TUI dashboard
     Tui,
 }

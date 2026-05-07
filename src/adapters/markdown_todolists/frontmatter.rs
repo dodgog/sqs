@@ -1,4 +1,6 @@
 use chrono::{DateTime, Utc};
+use serde::de::{self, Deserializer};
+use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
 use crate::adapter::Item;
@@ -9,8 +11,51 @@ pub struct ItemFrontmatter {
     pub title: String,
     pub list: String,
     pub order: f64,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_tags",
+        deserialize_with = "deserialize_tags"
+    )]
+    pub tags: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Always emit the canonical space-separated form so existing files stay
+/// diff-clean.
+fn serialize_tags<S: Serializer>(tags: &[String], s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&tags.join(" "))
+}
+
+/// Accept either the legacy space-separated string or a YAML list.
+fn deserialize_tags<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    struct TagsVisitor;
+    impl<'de> de::Visitor<'de> for TagsVisitor {
+        type Value = Vec<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("space-separated string or YAML list of tags")
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(v.split_whitespace().map(|s| s.to_string()).collect())
+        }
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            self.visit_str(&v)
+        }
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            while let Some(s) = a.next_element::<String>()? {
+                if !s.is_empty() {
+                    out.push(s);
+                }
+            }
+            Ok(out)
+        }
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(Vec::new())
+        }
+    }
+    d.deserialize_any(TagsVisitor)
 }
 
 pub fn parse_item_file(input: &str) -> Result<(ItemFrontmatter, String), AppError> {
@@ -25,7 +70,7 @@ pub fn parse_item_file(input: &str) -> Result<(ItemFrontmatter, String), AppErro
     };
 
     let yaml_str = &after_start[..end_pos];
-    let body_start = end_pos + 4; // skip "\n---"
+    let body_start = end_pos + 4;
     let body = if body_start < after_start.len() {
         after_start[body_start..]
             .trim_start_matches('\n')
@@ -53,6 +98,9 @@ pub fn item_from_frontmatter(ext_id: &str, fm: &ItemFrontmatter, body: &str) -> 
     fm.title.hash(&mut hasher);
     fm.list.hash(&mut hasher);
     fm.order.to_bits().hash(&mut hasher);
+    for t in &fm.tags {
+        t.hash(&mut hasher);
+    }
     body.hash(&mut hasher);
     let content_hash = hasher.finish();
 
@@ -62,6 +110,7 @@ pub fn item_from_frontmatter(ext_id: &str, fm: &ItemFrontmatter, body: &str) -> 
         body: body.to_string(),
         list: fm.list.clone(),
         order: fm.order,
+        tags: fm.tags.clone(),
         content_hash,
     }
 }
@@ -76,6 +125,7 @@ mod tests {
             title: "Test task".into(),
             list: "now".into(),
             order: 1024.0,
+            tags: vec![],
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -111,5 +161,36 @@ mod tests {
         let item1 = item_from_frontmatter("a1", &fm, "body1");
         let item2 = item_from_frontmatter("a1", &fm, "body2");
         assert_ne!(item1.content_hash, item2.content_hash);
+    }
+
+    #[test]
+    fn tags_roundtrip_space_separated_string() {
+        let mut fm = sample_fm();
+        fm.tags = vec!["MIL010-foo".into(), "SCOPE-bar".into()];
+        let rendered = render_item_file(&fm, "body\n");
+        assert!(rendered.contains("tags: MIL010-foo SCOPE-bar"));
+        let (parsed, _) = parse_item_file(&rendered).unwrap();
+        assert_eq!(parsed.tags, vec!["MIL010-foo", "SCOPE-bar"]);
+    }
+
+    #[test]
+    fn tags_parse_yaml_list_form() {
+        let raw = "---\ntitle: t\nlist: now\norder: 1.0\ntags: [a, b, c]\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\n---\nbody\n";
+        let (fm, _) = parse_item_file(raw).unwrap();
+        assert_eq!(fm.tags, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn tags_omitted_when_empty() {
+        let fm = sample_fm();
+        let rendered = render_item_file(&fm, "");
+        assert!(!rendered.contains("tags"));
+    }
+
+    #[test]
+    fn tags_default_when_missing() {
+        let raw = "---\ntitle: t\nlist: now\norder: 1.0\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\n---\nbody\n";
+        let (fm, _) = parse_item_file(raw).unwrap();
+        assert!(fm.tags.is_empty());
     }
 }
